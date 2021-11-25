@@ -1,0 +1,13 @@
+name = "KLU"
+uuid = "ef3ab10e-7fda-4108-b977-705223b18434"
+authors = ["Wimmerer <wrkimmerer@outlook.com> and contributors"]
+version = "0.1.0"
+
+[compat]
+julia = "1"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
