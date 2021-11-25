@@ -3,6 +3,10 @@ uuid = "ef3ab10e-7fda-4108-b977-705223b18434"
 authors = ["Wimmerer <wrkimmerer@outlook.com> and contributors"]
 version = "0.1.0"
 
+[deps]
+SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
+SuiteSparse_jll = "bea87d4a-7f5b-5778-9afe-8cc45184846c"
+
 [compat]
 julia = "1"
 
