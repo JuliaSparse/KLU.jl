@@ -1,4 +1,5 @@
 # KLU
+[![](https://img.shields.io/badge/docs-dev-blue.svg)](https://wimmerer.github.io/KLU.jl/dev/)
 
 A linear solver for sparse circuit simulation problems.
 
@@ -35,6 +36,5 @@ julia> x = factor \ b
   10.688731342850245
 ```
 <!---[![](https://img.shields.io/badge/docs-stable-blue.svg)](https://USER_NAME.github.io/PACKAGE_NAME.jl/stable) --->
-[![](https://img.shields.io/badge/docs-dev-blue.svg)](https://wimmerer.github.io/KLU.jl/dev/)
 
 
