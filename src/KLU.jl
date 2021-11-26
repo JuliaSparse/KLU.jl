@@ -483,8 +483,8 @@ klu_factor!
 Compute the LU factorization of a sparse matrix `A` using KLU.
 
 For sparse `A` with real or complex element type, the return type of `K` is
-`KLUFactorization{Tv, Ti}`, with `Tv` = [`Float64`](@ref) or [`ComplexF64`](@ref)
-respectively and `Ti` is an integer type ([`Int32`](@ref) or [`Int64`](@ref)).
+`KLUFactorization{Tv, Ti}`, with `Tv` = `Float64` or `ComplexF64`
+respectively and `Ti` is an integer type (`Int32` or `Int64`).
 
 
 The individual components of the factorization `K` can be accessed by indexing:
@@ -500,11 +500,11 @@ The individual components of the factorization `K` can be accessed by indexing:
 
 The relation between `K` and `A` is
 
-`K.L * K.U + K.F  == K.Rs [`\\`]`(@ref) A[K.p, K.q]`
+`K.L * K.U + K.F  == K.Rs `\\` A[K.p, K.q]`
 
 `K` further supports the following functions:
 
-- [`\\`](@ref)
+- `LinearAlgebra.\\`
 
 !!! note
     `klu(A::SparseMatrixCSC)` uses the KLU library that is part of
