@@ -1,4 +1,6 @@
 using KLU
+using KLU: increment!, KLUITypes, decrement, klu!, KLUFactorization,
+klu_analyze!, klu_factor!
 using Test
 using SparseArrays: SparseMatrixCSC, sparse, nnz
 using LinearAlgebra

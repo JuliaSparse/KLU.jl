@@ -6,9 +6,26 @@ import SparseArrays: nnz
 
 export KLUFactorization, klu
 
+include("../lib/klu_lib.jl")
+using .LibKLU
+
 import Base: (\), size, getproperty, setproperty!, propertynames, show
-import ..increment, ..increment!, ..decrement, ..decrement!
-import ..LibSuiteSparse:
+
+# Convert from 1-based to 0-based indices
+function decrement!(A::AbstractArray{T}) where T<:Integer
+    for i in eachindex(A); A[i] -= oneunit(T) end
+    A
+end
+decrement(A::AbstractArray{<:Integer}) = decrement!(copy(A))
+
+# Convert from 0-based to 1-based indices
+function increment!(A::AbstractArray{T}) where T<:Integer
+    for i in eachindex(A); A[i] += oneunit(T) end
+    A
+end
+increment(A::AbstractArray{<:Integer}) = increment!(copy(A))
+
+using .LibKLU:
     SuiteSparse_long,
     klu_l_common,
     klu_common,
@@ -55,9 +72,12 @@ import ..LibSuiteSparse:
     klu_z_refactor,
     klu_l_refactor,
     klu_zl_refactor
+
 using LinearAlgebra
+
 const KLUTypes = Union{Float64, ComplexF64}
 const KLUValueTypes = (:Float64, :ComplexF64)
+
 if sizeof(SuiteSparse_long) == 4
     const KLUITypes = Int32
     const KLUIndexTypes = (:Int32,)
