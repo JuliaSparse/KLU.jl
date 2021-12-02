@@ -1,12 +1,12 @@
 # KLU
-[![](https://img.shields.io/badge/docs-dev-blue.svg)](https://wimmerer.github.io/KLU.jl/dev/)
+[![](https://img.shields.io/badge/docs-dev-blue.svg)](http://klu.juliasparse.org/dev/)
 
 A linear solver for sparse circuit simulation problems.
 
 ## Installation
 ```julia
 using Pkg
-Pkg.add(url="https://github.com/Wimmerer/KLU.jl")
+Pkg.add("KLU")
 ```
 
 ## Usage
