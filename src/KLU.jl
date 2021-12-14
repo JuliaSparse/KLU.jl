@@ -4,7 +4,7 @@ using SparseArrays
 using SparseArrays: SparseMatrixCSC
 import SparseArrays: nnz
 
-export KLUFactorization, klu
+export klu, klu!
 
 include("../lib/klu_lib.jl")
 using .LibKLU
