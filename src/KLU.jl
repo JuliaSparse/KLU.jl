@@ -560,7 +560,11 @@ end
 
 function klu!(K::KLUFactorization{U}, S::SparseMatrixCSC{U}) where {U}
     size(K) == size(S) || throw(ArgumentError("Sizes of K and S must match."))
+    increment!(K.colptr)
+    increment!(K.rowval)
     K.colptr == S.colptr && K.rowval == S.rowval || throw(ArgumentError("The pattern of the original matrix must match the pattern of the refactor."))
+    decrement!(K.colptr)
+    decrement!(K.rowval)
     return klu!(K, S.nzval)
 end
 #B is the modified argument here. To match with the math it should be (klu, B). But convention is
