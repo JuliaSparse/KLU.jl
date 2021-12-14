@@ -353,7 +353,7 @@ function getproperty(klu::KLUFactorization{Tv, Ti}, s::Symbol) where {Tv<:KLUTyp
                 P = sortperm(Fiview)
                 Fiview .= Fiview[P]
                 Fxview .= Fxview[P]
-                if length(Fz) == length(Fx)
+                if Fz != C_NULL && length(Fz) == length(Fx)
                     Fzview = view(Fz, first:last)
                     Fzview .= Fzview[P]
                 end
