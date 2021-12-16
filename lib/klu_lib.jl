@@ -27,17 +27,17 @@ mutable struct klu_l_symbolic
     lnz::Cdouble
     unz::Cdouble
     Lnz::Ptr{Cdouble}
-    n::Clong
-    nz::Clong
-    P::Ptr{Clong}
-    Q::Ptr{Clong}
-    R::Ptr{Clong}
-    nzoff::Clong
-    nblocks::Clong
-    maxblock::Clong
-    ordering::Clong
-    do_btf::Clong
-    structural_rank::Clong
+    n::Int64
+    nz::Int64
+    P::Ptr{Int64}
+    Q::Ptr{Int64}
+    R::Ptr{Int64}
+    nzoff::Int64
+    nblocks::Int64
+    maxblock::Int64
+    ordering::Int64
+    do_btf::Int64
+    structural_rank::Int64
     klu_l_symbolic() = new()
 end
 
@@ -70,18 +70,18 @@ mutable struct klu_numeric
 end
 
 mutable struct klu_l_numeric
-    n::Clong
-    nblocks::Clong
-    lnz::Clong
-    unz::Clong
-    max_lnz_block::Clong
-    max_unz_block::Clong
-    Pnum::Ptr{Clong}
-    Pinv::Ptr{Clong}
-    Lip::Ptr{Clong}
-    Uip::Ptr{Clong}
-    Llen::Ptr{Clong}
-    Ulen::Ptr{Clong}
+    n::Int64
+    nblocks::Int64
+    lnz::Int64
+    unz::Int64
+    max_lnz_block::Int64
+    max_unz_block::Int64
+    Pnum::Ptr{Int64}
+    Pinv::Ptr{Int64}
+    Lip::Ptr{Int64}
+    Uip::Ptr{Int64}
+    Llen::Ptr{Int64}
+    Ulen::Ptr{Int64}
     LUbx::Ptr{Ptr{Cvoid}}
     LUsize::Ptr{Csize_t}
     Udiag::Ptr{Cvoid}
@@ -89,11 +89,11 @@ mutable struct klu_l_numeric
     worksize::Csize_t
     Work::Ptr{Cvoid}
     Xwork::Ptr{Cvoid}
-    Iwork::Ptr{Clong}
-    Offp::Ptr{Clong}
-    Offi::Ptr{Clong}
+    Iwork::Ptr{Int64}
+    Offp::Ptr{Int64}
+    Offi::Ptr{Int64}
     Offx::Ptr{Cvoid}
-    nzoff::Clong
+    nzoff::Int64
     klu_l_numeric() = new()
 end
 
@@ -133,18 +133,18 @@ mutable struct klu_l_common_struct
     initmem_amd::Cdouble
     initmem::Cdouble
     maxwork::Cdouble
-    btf::Clong
-    ordering::Clong
-    scale::Clong
+    btf::Int64
+    ordering::Int64
+    scale::Int64
     user_order::Ptr{Cvoid}
     user_data::Ptr{Cvoid}
-    halt_if_singular::Clong
-    status::Clong
-    nrealloc::Clong
-    structural_rank::Clong
-    numerical_rank::Clong
-    singular_col::Clong
-    noffdiag::Clong
+    halt_if_singular::Int64
+    status::Int64
+    nrealloc::Int64
+    structural_rank::Int64
+    numerical_rank::Int64
+    singular_col::Int64
+    noffdiag::Int64
     flops::Cdouble
     rcond::Cdouble
     condest::Cdouble
@@ -162,7 +162,7 @@ function klu_defaults(Common)
 end
 
 function klu_l_defaults(Common)
-    @ccall libklu.klu_l_defaults(Common::Ptr{klu_l_common})::Clong
+    @ccall libklu.klu_l_defaults(Common::Ptr{klu_l_common})::Int64
 end
 
 function klu_analyze(n, Ap, Ai, Common)
@@ -170,7 +170,7 @@ function klu_analyze(n, Ap, Ai, Common)
 end
 
 function klu_l_analyze(arg1, arg2, arg3, Common)
-    @ccall libklu.klu_l_analyze(arg1::Clong, arg2::Ptr{Clong}, arg3::Ptr{Clong}, Common::Ptr{klu_l_common})::Ptr{klu_l_symbolic}
+    @ccall libklu.klu_l_analyze(arg1::Int64, arg2::Ptr{Int64}, arg3::Ptr{Int64}, Common::Ptr{klu_l_common})::Ptr{klu_l_symbolic}
 end
 
 function klu_analyze_given(n, Ap, Ai, P, Q, Common)
@@ -178,7 +178,7 @@ function klu_analyze_given(n, Ap, Ai, P, Q, Common)
 end
 
 function klu_l_analyze_given(arg1, arg2, arg3, arg4, arg5, arg6)
-    @ccall libklu.klu_l_analyze_given(arg1::Clong, arg2::Ptr{Clong}, arg3::Ptr{Clong}, arg4::Ptr{Clong}, arg5::Ptr{Clong}, arg6::Ptr{klu_l_common})::Ptr{klu_l_symbolic}
+    @ccall libklu.klu_l_analyze_given(arg1::Int64, arg2::Ptr{Int64}, arg3::Ptr{Int64}, arg4::Ptr{Int64}, arg5::Ptr{Int64}, arg6::Ptr{klu_l_common})::Ptr{klu_l_symbolic}
 end
 
 function klu_factor(Ap, Ai, Ax, Symbolic, Common)
@@ -190,11 +190,11 @@ function klu_z_factor(Ap, Ai, Ax, Symbolic, Common)
 end
 
 function klu_l_factor(arg1, arg2, arg3, arg4, arg5)
-    @ccall libklu.klu_l_factor(arg1::Ptr{Clong}, arg2::Ptr{Clong}, arg3::Ptr{Cdouble}, arg4::Ptr{klu_l_symbolic}, arg5::Ptr{klu_l_common})::Ptr{klu_l_numeric}
+    @ccall libklu.klu_l_factor(arg1::Ptr{Int64}, arg2::Ptr{Int64}, arg3::Ptr{Cdouble}, arg4::Ptr{klu_l_symbolic}, arg5::Ptr{klu_l_common})::Ptr{klu_l_numeric}
 end
 
 function klu_zl_factor(arg1, arg2, arg3, arg4, arg5)
-    @ccall libklu.klu_zl_factor(arg1::Ptr{Clong}, arg2::Ptr{Clong}, arg3::Ptr{Cdouble}, arg4::Ptr{klu_l_symbolic}, arg5::Ptr{klu_l_common})::Ptr{klu_l_numeric}
+    @ccall libklu.klu_zl_factor(arg1::Ptr{Int64}, arg2::Ptr{Int64}, arg3::Ptr{Cdouble}, arg4::Ptr{klu_l_symbolic}, arg5::Ptr{klu_l_common})::Ptr{klu_l_numeric}
 end
 
 function klu_solve(Symbolic, Numeric, ldim, nrhs, B, Common)
@@ -206,11 +206,11 @@ function klu_z_solve(Symbolic, Numeric, ldim, nrhs, B, Common)
 end
 
 function klu_l_solve(arg1, arg2, arg3, arg4, arg5, arg6)
-    @ccall libklu.klu_l_solve(arg1::Ptr{klu_l_symbolic}, arg2::Ptr{klu_l_numeric}, arg3::Clong, arg4::Clong, arg5::Ptr{Cdouble}, arg6::Ptr{klu_l_common})::Clong
+    @ccall libklu.klu_l_solve(arg1::Ptr{klu_l_symbolic}, arg2::Ptr{klu_l_numeric}, arg3::Int64, arg4::Int64, arg5::Ptr{Cdouble}, arg6::Ptr{klu_l_common})::Int64
 end
 
 function klu_zl_solve(arg1, arg2, arg3, arg4, arg5, arg6)
-    @ccall libklu.klu_zl_solve(arg1::Ptr{klu_l_symbolic}, arg2::Ptr{klu_l_numeric}, arg3::Clong, arg4::Clong, arg5::Ptr{Cdouble}, arg6::Ptr{klu_l_common})::Clong
+    @ccall libklu.klu_zl_solve(arg1::Ptr{klu_l_symbolic}, arg2::Ptr{klu_l_numeric}, arg3::Int64, arg4::Int64, arg5::Ptr{Cdouble}, arg6::Ptr{klu_l_common})::Int64
 end
 
 function klu_tsolve(Symbolic, Numeric, ldim, nrhs, B, Common)
@@ -222,11 +222,11 @@ function klu_z_tsolve(Symbolic, Numeric, ldim, nrhs, B, conj_solve, Common)
 end
 
 function klu_l_tsolve(arg1, arg2, arg3, arg4, arg5, arg6)
-    @ccall libklu.klu_l_tsolve(arg1::Ptr{klu_l_symbolic}, arg2::Ptr{klu_l_numeric}, arg3::Clong, arg4::Clong, arg5::Ptr{Cdouble}, arg6::Ptr{klu_l_common})::Clong
+    @ccall libklu.klu_l_tsolve(arg1::Ptr{klu_l_symbolic}, arg2::Ptr{klu_l_numeric}, arg3::Int64, arg4::Int64, arg5::Ptr{Cdouble}, arg6::Ptr{klu_l_common})::Int64
 end
 
 function klu_zl_tsolve(arg1, arg2, arg3, arg4, arg5, arg6, arg7)
-    @ccall libklu.klu_zl_tsolve(arg1::Ptr{klu_l_symbolic}, arg2::Ptr{klu_l_numeric}, arg3::Clong, arg4::Clong, arg5::Ptr{Cdouble}, arg6::Clong, arg7::Ptr{klu_l_common})::Clong
+    @ccall libklu.klu_zl_tsolve(arg1::Ptr{klu_l_symbolic}, arg2::Ptr{klu_l_numeric}, arg3::Int64, arg4::Int64, arg5::Ptr{Cdouble}, arg6::Int64, arg7::Ptr{klu_l_common})::Int64
 end
 
 function klu_refactor(Ap, Ai, Ax, Symbolic, Numeric, Common)
@@ -238,11 +238,11 @@ function klu_z_refactor(Ap, Ai, Ax, Symbolic, Numeric, Common)
 end
 
 function klu_l_refactor(arg1, arg2, arg3, arg4, arg5, arg6)
-    @ccall libklu.klu_l_refactor(arg1::Ptr{Clong}, arg2::Ptr{Clong}, arg3::Ptr{Cdouble}, arg4::Ptr{klu_l_symbolic}, arg5::Ptr{klu_l_numeric}, arg6::Ptr{klu_l_common})::Clong
+    @ccall libklu.klu_l_refactor(arg1::Ptr{Int64}, arg2::Ptr{Int64}, arg3::Ptr{Cdouble}, arg4::Ptr{klu_l_symbolic}, arg5::Ptr{klu_l_numeric}, arg6::Ptr{klu_l_common})::Int64
 end
 
 function klu_zl_refactor(arg1, arg2, arg3, arg4, arg5, arg6)
-    @ccall libklu.klu_zl_refactor(arg1::Ptr{Clong}, arg2::Ptr{Clong}, arg3::Ptr{Cdouble}, arg4::Ptr{klu_l_symbolic}, arg5::Ptr{klu_l_numeric}, arg6::Ptr{klu_l_common})::Clong
+    @ccall libklu.klu_zl_refactor(arg1::Ptr{Int64}, arg2::Ptr{Int64}, arg3::Ptr{Cdouble}, arg4::Ptr{klu_l_symbolic}, arg5::Ptr{klu_l_numeric}, arg6::Ptr{klu_l_common})::Int64
 end
 
 function klu_free_symbolic(Symbolic, Common)
@@ -250,7 +250,7 @@ function klu_free_symbolic(Symbolic, Common)
 end
 
 function klu_l_free_symbolic(arg1, arg2)
-    @ccall libklu.klu_l_free_symbolic(arg1::Ptr{Ptr{klu_l_symbolic}}, arg2::Ptr{klu_l_common})::Clong
+    @ccall libklu.klu_l_free_symbolic(arg1::Ptr{Ptr{klu_l_symbolic}}, arg2::Ptr{klu_l_common})::Int64
 end
 
 function klu_free_numeric(Numeric, Common)
@@ -262,11 +262,11 @@ function klu_z_free_numeric(Numeric, Common)
 end
 
 function klu_l_free_numeric(arg1, arg2)
-    @ccall libklu.klu_l_free_numeric(arg1::Ptr{Ptr{klu_l_numeric}}, arg2::Ptr{klu_l_common})::Clong
+    @ccall libklu.klu_l_free_numeric(arg1::Ptr{Ptr{klu_l_numeric}}, arg2::Ptr{klu_l_common})::Int64
 end
 
 function klu_zl_free_numeric(arg1, arg2)
-    @ccall libklu.klu_zl_free_numeric(arg1::Ptr{Ptr{klu_l_numeric}}, arg2::Ptr{klu_l_common})::Clong
+    @ccall libklu.klu_zl_free_numeric(arg1::Ptr{Ptr{klu_l_numeric}}, arg2::Ptr{klu_l_common})::Int64
 end
 
 function klu_sort(Symbolic, Numeric, Common)
@@ -278,11 +278,11 @@ function klu_z_sort(Symbolic, Numeric, Common)
 end
 
 function klu_l_sort(arg1, arg2, arg3)
-    @ccall libklu.klu_l_sort(arg1::Ptr{klu_l_symbolic}, arg2::Ptr{klu_l_numeric}, arg3::Ptr{klu_l_common})::Clong
+    @ccall libklu.klu_l_sort(arg1::Ptr{klu_l_symbolic}, arg2::Ptr{klu_l_numeric}, arg3::Ptr{klu_l_common})::Int64
 end
 
 function klu_zl_sort(arg1, arg2, arg3)
-    @ccall libklu.klu_zl_sort(arg1::Ptr{klu_l_symbolic}, arg2::Ptr{klu_l_numeric}, arg3::Ptr{klu_l_common})::Clong
+    @ccall libklu.klu_zl_sort(arg1::Ptr{klu_l_symbolic}, arg2::Ptr{klu_l_numeric}, arg3::Ptr{klu_l_common})::Int64
 end
 
 function klu_flops(Symbolic, Numeric, Common)
@@ -294,11 +294,11 @@ function klu_z_flops(Symbolic, Numeric, Common)
 end
 
 function klu_l_flops(arg1, arg2, arg3)
-    @ccall libklu.klu_l_flops(arg1::Ptr{klu_l_symbolic}, arg2::Ptr{klu_l_numeric}, arg3::Ptr{klu_l_common})::Clong
+    @ccall libklu.klu_l_flops(arg1::Ptr{klu_l_symbolic}, arg2::Ptr{klu_l_numeric}, arg3::Ptr{klu_l_common})::Int64
 end
 
 function klu_zl_flops(arg1, arg2, arg3)
-    @ccall libklu.klu_zl_flops(arg1::Ptr{klu_l_symbolic}, arg2::Ptr{klu_l_numeric}, arg3::Ptr{klu_l_common})::Clong
+    @ccall libklu.klu_zl_flops(arg1::Ptr{klu_l_symbolic}, arg2::Ptr{klu_l_numeric}, arg3::Ptr{klu_l_common})::Int64
 end
 
 function klu_rgrowth(Ap, Ai, Ax, Symbolic, Numeric, Common)
@@ -310,11 +310,11 @@ function klu_z_rgrowth(Ap, Ai, Ax, Symbolic, Numeric, Common)
 end
 
 function klu_l_rgrowth(arg1, arg2, arg3, arg4, arg5, arg6)
-    @ccall libklu.klu_l_rgrowth(arg1::Ptr{Clong}, arg2::Ptr{Clong}, arg3::Ptr{Cdouble}, arg4::Ptr{klu_l_symbolic}, arg5::Ptr{klu_l_numeric}, arg6::Ptr{klu_l_common})::Clong
+    @ccall libklu.klu_l_rgrowth(arg1::Ptr{Int64}, arg2::Ptr{Int64}, arg3::Ptr{Cdouble}, arg4::Ptr{klu_l_symbolic}, arg5::Ptr{klu_l_numeric}, arg6::Ptr{klu_l_common})::Int64
 end
 
 function klu_zl_rgrowth(arg1, arg2, arg3, arg4, arg5, arg6)
-    @ccall libklu.klu_zl_rgrowth(arg1::Ptr{Clong}, arg2::Ptr{Clong}, arg3::Ptr{Cdouble}, arg4::Ptr{klu_l_symbolic}, arg5::Ptr{klu_l_numeric}, arg6::Ptr{klu_l_common})::Clong
+    @ccall libklu.klu_zl_rgrowth(arg1::Ptr{Int64}, arg2::Ptr{Int64}, arg3::Ptr{Cdouble}, arg4::Ptr{klu_l_symbolic}, arg5::Ptr{klu_l_numeric}, arg6::Ptr{klu_l_common})::Int64
 end
 
 function klu_condest(Ap, Ax, Symbolic, Numeric, Common)
@@ -326,11 +326,11 @@ function klu_z_condest(Ap, Ax, Symbolic, Numeric, Common)
 end
 
 function klu_l_condest(arg1, arg2, arg3, arg4, arg5)
-    @ccall libklu.klu_l_condest(arg1::Ptr{Clong}, arg2::Ptr{Cdouble}, arg3::Ptr{klu_l_symbolic}, arg4::Ptr{klu_l_numeric}, arg5::Ptr{klu_l_common})::Clong
+    @ccall libklu.klu_l_condest(arg1::Ptr{Int64}, arg2::Ptr{Cdouble}, arg3::Ptr{klu_l_symbolic}, arg4::Ptr{klu_l_numeric}, arg5::Ptr{klu_l_common})::Int64
 end
 
 function klu_zl_condest(arg1, arg2, arg3, arg4, arg5)
-    @ccall libklu.klu_zl_condest(arg1::Ptr{Clong}, arg2::Ptr{Cdouble}, arg3::Ptr{klu_l_symbolic}, arg4::Ptr{klu_l_numeric}, arg5::Ptr{klu_l_common})::Clong
+    @ccall libklu.klu_zl_condest(arg1::Ptr{Int64}, arg2::Ptr{Cdouble}, arg3::Ptr{klu_l_symbolic}, arg4::Ptr{klu_l_numeric}, arg5::Ptr{klu_l_common})::Int64
 end
 
 function klu_rcond(Symbolic, Numeric, Common)
@@ -342,11 +342,11 @@ function klu_z_rcond(Symbolic, Numeric, Common)
 end
 
 function klu_l_rcond(arg1, arg2, arg3)
-    @ccall libklu.klu_l_rcond(arg1::Ptr{klu_l_symbolic}, arg2::Ptr{klu_l_numeric}, arg3::Ptr{klu_l_common})::Clong
+    @ccall libklu.klu_l_rcond(arg1::Ptr{klu_l_symbolic}, arg2::Ptr{klu_l_numeric}, arg3::Ptr{klu_l_common})::Int64
 end
 
 function klu_zl_rcond(arg1, arg2, arg3)
-    @ccall libklu.klu_zl_rcond(arg1::Ptr{klu_l_symbolic}, arg2::Ptr{klu_l_numeric}, arg3::Ptr{klu_l_common})::Clong
+    @ccall libklu.klu_zl_rcond(arg1::Ptr{klu_l_symbolic}, arg2::Ptr{klu_l_numeric}, arg3::Ptr{klu_l_common})::Int64
 end
 
 function klu_scale(scale, n, Ap, Ai, Ax, Rs, W, Common)
@@ -358,11 +358,11 @@ function klu_z_scale(scale, n, Ap, Ai, Ax, Rs, W, Common)
 end
 
 function klu_l_scale(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8)
-    @ccall libklu.klu_l_scale(arg1::Clong, arg2::Clong, arg3::Ptr{Clong}, arg4::Ptr{Clong}, arg5::Ptr{Cdouble}, arg6::Ptr{Cdouble}, arg7::Ptr{Clong}, arg8::Ptr{klu_l_common})::Clong
+    @ccall libklu.klu_l_scale(arg1::Int64, arg2::Int64, arg3::Ptr{Int64}, arg4::Ptr{Int64}, arg5::Ptr{Cdouble}, arg6::Ptr{Cdouble}, arg7::Ptr{Int64}, arg8::Ptr{klu_l_common})::Int64
 end
 
 function klu_zl_scale(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8)
-    @ccall libklu.klu_zl_scale(arg1::Clong, arg2::Clong, arg3::Ptr{Clong}, arg4::Ptr{Clong}, arg5::Ptr{Cdouble}, arg6::Ptr{Cdouble}, arg7::Ptr{Clong}, arg8::Ptr{klu_l_common})::Clong
+    @ccall libklu.klu_zl_scale(arg1::Int64, arg2::Int64, arg3::Ptr{Int64}, arg4::Ptr{Int64}, arg5::Ptr{Cdouble}, arg6::Ptr{Cdouble}, arg7::Ptr{Int64}, arg8::Ptr{klu_l_common})::Int64
 end
 
 function klu_extract(Numeric, Symbolic, Lp, Li, Lx, Up, Ui, Ux, Fp, Fi, Fx, P, Q, Rs, R, Common)
@@ -374,11 +374,11 @@ function klu_z_extract(Numeric, Symbolic, Lp, Li, Lx, Lz, Up, Ui, Ux, Uz, Fp, Fi
 end
 
 function klu_l_extract(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12, arg13, arg14, arg15, arg16)
-    @ccall libklu.klu_l_extract(arg1::Ptr{klu_l_numeric}, arg2::Ptr{klu_l_symbolic}, arg3::Ptr{Clong}, arg4::Ptr{Clong}, arg5::Ptr{Cdouble}, arg6::Ptr{Clong}, arg7::Ptr{Clong}, arg8::Ptr{Cdouble}, arg9::Ptr{Clong}, arg10::Ptr{Clong}, arg11::Ptr{Cdouble}, arg12::Ptr{Clong}, arg13::Ptr{Clong}, arg14::Ptr{Cdouble}, arg15::Ptr{Clong}, arg16::Ptr{klu_l_common})::Clong
+    @ccall libklu.klu_l_extract(arg1::Ptr{klu_l_numeric}, arg2::Ptr{klu_l_symbolic}, arg3::Ptr{Int64}, arg4::Ptr{Int64}, arg5::Ptr{Cdouble}, arg6::Ptr{Int64}, arg7::Ptr{Int64}, arg8::Ptr{Cdouble}, arg9::Ptr{Int64}, arg10::Ptr{Int64}, arg11::Ptr{Cdouble}, arg12::Ptr{Int64}, arg13::Ptr{Int64}, arg14::Ptr{Cdouble}, arg15::Ptr{Int64}, arg16::Ptr{klu_l_common})::Int64
 end
 
 function klu_zl_extract(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12, arg13, arg14, arg15, arg16, arg17, arg18, arg19)
-    @ccall libklu.klu_zl_extract(arg1::Ptr{klu_l_numeric}, arg2::Ptr{klu_l_symbolic}, arg3::Ptr{Clong}, arg4::Ptr{Clong}, arg5::Ptr{Cdouble}, arg6::Ptr{Cdouble}, arg7::Ptr{Clong}, arg8::Ptr{Clong}, arg9::Ptr{Cdouble}, arg10::Ptr{Cdouble}, arg11::Ptr{Clong}, arg12::Ptr{Clong}, arg13::Ptr{Cdouble}, arg14::Ptr{Cdouble}, arg15::Ptr{Clong}, arg16::Ptr{Clong}, arg17::Ptr{Cdouble}, arg18::Ptr{Clong}, arg19::Ptr{klu_l_common})::Clong
+    @ccall libklu.klu_zl_extract(arg1::Ptr{klu_l_numeric}, arg2::Ptr{klu_l_symbolic}, arg3::Ptr{Int64}, arg4::Ptr{Int64}, arg5::Ptr{Cdouble}, arg6::Ptr{Cdouble}, arg7::Ptr{Int64}, arg8::Ptr{Int64}, arg9::Ptr{Cdouble}, arg10::Ptr{Cdouble}, arg11::Ptr{Int64}, arg12::Ptr{Int64}, arg13::Ptr{Cdouble}, arg14::Ptr{Cdouble}, arg15::Ptr{Int64}, arg16::Ptr{Int64}, arg17::Ptr{Cdouble}, arg18::Ptr{Int64}, arg19::Ptr{klu_l_common})::Int64
 end
 
 function klu_malloc(n, size, Common)
@@ -427,9 +427,9 @@ const KLU_SUBSUB_VERSION = 9
 
 const KLU_VERSION = KLU_VERSION_CODE(KLU_MAIN_VERSION, KLU_SUB_VERSION)
 
-const SuiteSparse_long = Clong
+const SuiteSparse_long = Int64
 
-const LONG_MAX = typemax(Clong)
+const LONG_MAX = typemax(Int64)
 
 const SuiteSparse_long_max = LONG_MAX
 
