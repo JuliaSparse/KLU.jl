@@ -400,8 +400,8 @@ function LinearAlgebra.issuccess(K::KLUFactorization)
     return K.common.status == KLU_OK && K._numeric != C_NULL
 end
 function show(io::IO, mime::MIME{Symbol("text/plain")}, K::KLUFactorization)
-    if issuccess(K)
-        summary(io, K); println(io)
+    summary(io, K); println(io)
+    if K._numeric != C_NULL
         println(io, "L factor:")
         show(io, mime, K.L)
         println(io, "\nU factor:")
@@ -412,7 +412,7 @@ function show(io::IO, mime::MIME{Symbol("text/plain")}, K::KLUFactorization)
             show(io, mime, K.F)
         end
     else
-        throw(ArgumentError("Failed factorization of type $(typeof(K)). Try `klu_factor!(K)`."))
+        println(io, "Incomplete Factorization, please try `klu_factor!(K)`.")
     end
 end
 
