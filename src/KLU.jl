@@ -463,6 +463,51 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
     end
 end
 
+for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
+    rgrowth = _klu_name("rgrowth", Tv, Ti)
+    @eval begin
+        function rgrowth(K::KLUFactorization{$Tv, $Ti})
+            K._numeric == C_NULL && klu_factor!(K)
+            ok = $rgrowth(K.colptr, K.rowval, K.nzval, K._symbolic, K._numeric, Ref(K.common))
+            if ok == 0
+                kluerror(K.common)
+            else
+                return K.common.rgrowth
+            end
+        end
+    end
+end
+
+for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
+    condest = _klu_name("condest", Tv, Ti)
+    @eval begin
+        function condest(K::KLUFactorization{$Tv, $Ti})
+            K._numeric == C_NULL && klu_factor!(K)
+            ok = $condest(K.colptr, K.nzval, K._symbolic, K._numeric, Ref(K.common))
+            if ok == 0
+                kluerror(K.common)
+            else
+                return K.common.condest
+            end
+        end
+    end
+end
+
+for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
+    rcond = _klu_name("rcond", Tv, Ti)
+    @eval begin
+        function rcond(K::KLUFactorization{$Tv, $Ti})
+            K._numeric == C_NULL && klu_factor!(K)
+            ok = $rcond(K._symbolic, K._numeric, Ref(K.common))
+            if ok == 0
+                kluerror(K.common)
+            else
+                return K.common.rcond
+            end
+        end
+    end
+end
+
 """
     klu_factor!(K::KLUFactorization)
 
