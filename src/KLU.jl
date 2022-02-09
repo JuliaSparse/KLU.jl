@@ -341,11 +341,12 @@ function getproperty(klu::KLUFactorization{Tv, Ti}, s::Symbol) where {Tv<:KLUTyp
             Fz = Tv == Float64 ? C_NULL : Vector{Float64}(undef, fnz)
             _extract!(klu; Fp, Fi, Fx, Fz)
             # F is *not* sorted on output, so we'll have to do it here:
-            for i ∈ 1:length(Fp) - 1
-                Fp[end] -= 1 # deal with last index being last + 1
+            for i ∈ 1:(length(Fp) - 1)
                 # find each segment
                 first = Fp[i] + 1
-                last = Fp[i+1] + 1
+                last = Fp[i+1]
+                first > last && (continue)
+                first == length(Fi) && (break)
                 # sort each column of rowval, nzval, and Fz for complex numbers if necessary
                 #by the ascending permutation of rowval.
                 Fiview = view(Fi, first:last)
@@ -357,8 +358,6 @@ function getproperty(klu::KLUFactorization{Tv, Ti}, s::Symbol) where {Tv<:KLUTyp
                     Fzview = view(Fz, first:last)
                     Fzview .= Fzview[P]
                 end
-                # reset the last entry
-                Fp[end] += 1
             end
         end
         return Fp, Fi, Fx, Fz
