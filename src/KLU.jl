@@ -512,7 +512,7 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
         """
             condest(K::KLUFactorization)
 
-        Accurately estimate the condition number of the factorization.
+        Accurately estimate the 1-norm condition number of the factorization.
         """
         function condest(K::KLUFactorization{$Tv, $Ti})
             K._numeric == C_NULL && klu_factor!(K)
