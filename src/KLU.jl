@@ -71,8 +71,20 @@ using .LibKLU:
     klu_refactor,
     klu_z_refactor,
     klu_l_refactor,
-    klu_zl_refactor
-
+    klu_zl_refactor,
+    klu_rgrowth,
+    klu_z_rgrowth,
+    klu_l_rgrowth,
+    klu_zl_rgrowth,
+    klu_rcond,
+    klu_z_rcond,
+    klu_l_rcond,
+    klu_zl_rcond,
+    klu_condest,
+    klu_z_condest,
+    klu_l_condest,
+    klu_zl_condest
+    
 using LinearAlgebra
 
 const KLUTypes = Union{Float64, ComplexF64}
@@ -464,7 +476,14 @@ end
 
 for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
     rgrowth = _klu_name("rgrowth", Tv, Ti)
+    rcond = _klu_name("rcond", Tv, Ti)
+    condest = _klu_name("condest", Tv, Ti)
     @eval begin
+        """
+            rgrowth(K::KLUFactorization)
+
+        Calculate the reciprocal pivot growth.
+        """
         function rgrowth(K::KLUFactorization{$Tv, $Ti})
             K._numeric == C_NULL && klu_factor!(K)
             ok = $rgrowth(K.colptr, K.rowval, K.nzval, K._symbolic, K._numeric, Ref(K.common))
@@ -474,12 +493,27 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
                 return K.common.rgrowth
             end
         end
-    end
-end
 
-for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
-    condest = _klu_name("condest", Tv, Ti)
-    @eval begin
+        """
+            rcond(K::KLUFactorization)
+
+        Cheaply estimate the reciprocal condition number. 
+        """
+        function rcond(K::KLUFactorization{$Tv, $Ti})
+            K._numeric == C_NULL && klu_factor!(K)
+            ok = $rcond(K._symbolic, K._numeric, Ref(K.common))
+            if ok == 0
+                kluerror(K.common)
+            else
+                return K.common.rcond
+            end
+        end
+
+        """
+            condest(K::KLUFactorization)
+
+        Accurately estimate the condition number of the factorization.
+        """
         function condest(K::KLUFactorization{$Tv, $Ti})
             K._numeric == C_NULL && klu_factor!(K)
             ok = $condest(K.colptr, K.nzval, K._symbolic, K._numeric, Ref(K.common))
@@ -492,20 +526,6 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
     end
 end
 
-for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
-    rcond = _klu_name("rcond", Tv, Ti)
-    @eval begin
-        function rcond(K::KLUFactorization{$Tv, $Ti})
-            K._numeric == C_NULL && klu_factor!(K)
-            ok = $rcond(K._symbolic, K._numeric, Ref(K.common))
-            if ok == 0
-                kluerror(K.common)
-            else
-                return K.common.rcond
-            end
-        end
-    end
-end
 
 """
     klu_factor!(K::KLUFactorization)
