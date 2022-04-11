@@ -544,7 +544,7 @@ klu_factor!
     klu(A::SparseMatrixCSC) -> K::KLUFactorization
     klu(n, colptr::Vector{Ti}, rowval::Vector{Ti}, nzval::Vector{Tv}) -> K::KLUFactorization
 
-Compute the LU factorization of a sparse matrix `A` using KLU.
+Compute the LU factorization of a sparse matrix `A` using KLU[^ACM907].
 
 For sparse `A` with real or complex element type, the return type of `K` is
 `KLUFactorization{Tv, Ti}`, with `Tv` = `Float64` or `ComplexF64`
@@ -571,10 +571,12 @@ The relation between `K` and `A` is
 - `LinearAlgebra.\\`
 
 !!! note
-    `klu(A::SparseMatrixCSC)` uses the KLU library that is part of
+    `klu(A::SparseMatrixCSC)` uses the KLU[^ACM907] library that is part of
     SuiteSparse. As this library only supports sparse matrices with [`Float64`](@ref) or
     `ComplexF64` elements, `lu` converts `A` into a copy that is of type
     `SparseMatrixCSC{Float64}` or `SparseMatrixCSC{ComplexF64}` as appropriate.
+
+[^ACM907]: Davis, Timothy A., & Palamadai Natarajan, E. (2010). Algorithm 907: KLU, A Direct Sparse Solver for Circuit Simulation Problems. ACM Trans. Math. Softw., 37(3). doi:10.1145/1824801.1824814
 """
 function klu(n, colptr::Vector{Ti}, rowval::Vector{Ti}, nzval::Vector{Tv}) where {Ti<:KLUITypes, Tv<:AbstractFloat}
     if Tv != Float64
