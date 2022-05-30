@@ -291,10 +291,6 @@ function Base.propertynames(::KLUFactorization, private::Bool=false)
     end
 end
 
-function _constructfactormatrix!(::Type{M}, m, n, p, i, x) where {M <: SparseArrays.AbstractSparseMatrix}
-    return M(m, n, increment!(p), increment!(i), x)
-end
-
 function getproperty(klu::KLUFactorization{Tv, Ti, M}, s::Symbol) where {Tv<:KLUTypes, Ti<:KLUITypes, M}
     # Forwards to the numeric struct:
     if s ∈ [:lnz, :unz, :nzoff]
@@ -404,9 +400,9 @@ function getproperty(klu::KLUFactorization{Tv, Ti, M}, s::Symbol) where {Tv<:KLU
             p, i, x, z = klu._F
         end
         if Tv == Float64
-            return _constructfactormatrix!(M, klu.n, klu.n, (p), (i), x)
+            return SparseMatrixCSC(M, klu.n, klu.n, (p), (i), x)
         else
-            return _constructfactormatrix!(M, klu.n, klu.n, (p), (i), Complex.(x, z))
+            return SparseMatrixCSC(M, klu.n, klu.n, (p), (i), Complex.(x, z))
         end
     end
 end
