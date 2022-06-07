@@ -400,9 +400,9 @@ function getproperty(klu::KLUFactorization{Tv, Ti, M}, s::Symbol) where {Tv<:KLU
             p, i, x, z = klu._F
         end
         if Tv == Float64
-            return SparseMatrixCSC(M, klu.n, klu.n, (p), (i), x)
+            return SparseMatrixCSC(klu.n, klu.n, increment!(p), increment!(i), x)
         else
-            return SparseMatrixCSC(M, klu.n, klu.n, (p), (i), Complex.(x, z))
+            return SparseMatrixCSC(klu.n, klu.n, increment!(p), increment!(i), Complex.(x, z))
         end
     end
 end
@@ -628,11 +628,16 @@ function klu!(K::KLUFactorization{U}, S::SparseMatrixCSC{U}) where {U}
     size(K) == size(S) || throw(ArgumentError("Sizes of K and S must match."))
     increment!(K.colptr)
     increment!(K.rowval)
-    K.colptr == S.colptr && K.rowval == S.rowval || throw(ArgumentError("The pattern of the original matrix must match the pattern of the refactor."))
+    K.colptr == S.colptr && K.rowval == S.rowval || 
+        (decrement!(K.colptr); decrement!(K.rowval); 
+        throw(ArgumentError("The pattern of the original matrix must match the pattern of the refactor."))
+        )
     decrement!(K.colptr)
     decrement!(K.rowval)
     return klu!(K, S.nzval)
 end
+
+
 #B is the modified argument here. To match with the math it should be (klu, B). But convention is
 # modified first. Thoughts?
 for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
