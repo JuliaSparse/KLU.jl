@@ -1,6 +1,7 @@
 #! /bin/bash julia --project generator.jl
 using Pkg
 using Pkg.Artifacts
+using Clang
 using Clang.Generators
 using Clang.Generators.JLLEnvs
 using SuiteSparse_jll
@@ -35,5 +36,21 @@ for target in JLLEnvs.JLL_ENV_TRIPLES
 
     ctx = create_context(header_files, args, options)
 
-    build!(ctx)
+    build!(ctx, BUILDSTAGE_NO_PRINTING)
+
+    # custom rewriter
+    function rewrite!(dag::ExprDAG)
+        replace!(get_nodes(dag)) do node
+            filename = normpath(Clang.get_filename(node.cursor))
+            if !contains(filename, "klu")
+                return ExprNode(node.id, Generators.Skip(), node.cursor, Expr[], node.adj)
+            end
+            return node
+        end
+    end
+
+    rewrite!(ctx.dag)
+
+    # print
+    build!(ctx, BUILDSTAGE_PRINTING_ONLY)
 end

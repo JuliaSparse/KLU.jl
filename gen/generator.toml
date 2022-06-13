@@ -1,6 +1,5 @@
 [general]
-library_name = "libcholmod"
-library_names = {"klu.h" = "libklu"}
+library_name = "libklu"
 
 use_julia_native_enum_type = true
 use_deterministic_symbol = true
