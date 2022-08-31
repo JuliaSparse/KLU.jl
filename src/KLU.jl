@@ -165,6 +165,9 @@ function _common(T)
     end
 end
 
+abstract type AbstractKLUFactorization{Tv} <: LinearAlgebra.Factorization{Tv} end
+
+
 """
     KLUFactorization <: Factorization
 
@@ -176,7 +179,7 @@ See the [`klu`](@ref) docs for more information.
 
 You typically should not construct this directly, instead use [`klu`](@ref).
 """
-mutable struct KLUFactorization{Tv<:KLUTypes, Ti<:KLUITypes, M<:SparseArrays.AbstractSparseMatrix} <: LinearAlgebra.Factorization{Tv}
+mutable struct KLUFactorization{Tv<:KLUTypes, Ti<:KLUITypes} <: AbstractKLUFactorization{Tv}
     common::Union{klu_l_common, klu_common}
     _symbolic::Ptr{Cvoid}
     _numeric::Ptr{Cvoid}
@@ -184,10 +187,10 @@ mutable struct KLUFactorization{Tv<:KLUTypes, Ti<:KLUITypes, M<:SparseArrays.Abs
     colptr::Vector{Ti}
     rowval::Vector{Ti}
     nzval::Vector{Tv}
-    function KLUFactorization(n, colptr, rowval, nzval; matrixtype = SparseMatrixCSC)
+    function KLUFactorization(n, colptr, rowval, nzval)
         Ti = eltype(colptr)
         common = _common(Ti)
-        obj = new{eltype(nzval), Ti, matrixtype}(common, C_NULL, C_NULL, n, colptr, rowval, nzval)
+        obj = new{eltype(nzval), Ti}(common, C_NULL, C_NULL, n, colptr, rowval, nzval)
         function f(klu)
             _free_symbolic(klu)
             _free_numeric(klu)
@@ -224,7 +227,7 @@ function KLUFactorization(A::SparseMatrixCSC{Tv, Ti}) where {Tv<:KLUTypes, Ti<:K
     # Copying here to match UMFPACK
     # Seems overly defensive, it's probably rare that the user will modify A before the
     # numeric factorization is done.
-    return KLUFactorization(n, decrement(A.colptr), decrement(A.rowval), copy(A.nzval); matrixtype = SparseMatrixCSC)
+    return KLUFactorization(n, decrement(A.colptr), decrement(A.rowval), copy(A.nzval))
 end
 
 size(K::KLUFactorization) = (K.n, K.n)
@@ -291,7 +294,7 @@ function Base.propertynames(::KLUFactorization, private::Bool=false)
     end
 end
 
-function getproperty(klu::KLUFactorization{Tv, Ti, M}, s::Symbol) where {Tv<:KLUTypes, Ti<:KLUITypes, M}
+function getproperty(klu::KLUFactorization{Tv, Ti}, s::Symbol) where {Tv<:KLUTypes, Ti<:KLUITypes}
     # Forwards to the numeric struct:
     if s ∈ [:lnz, :unz, :nzoff]
         klu._numeric == C_NULL && throw(ArgumentError("This KLUFactorization has not yet been factored. Try `klu_factor!`."))
@@ -662,7 +665,7 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
         call = :($tsolve(klu._symbolic, klu._numeric, size(B, 1), size(B, 2), B, Ref(klu.common)))
     end
     @eval begin
-        function solve!(klu::Adjoint{$Tv, KLUFactorization{$Tv, $Ti, M}}, B::StridedVecOrMat{$Tv}) where {M}
+        function solve!(klu::Adjoint{$Tv, KLUFactorization{$Tv, $Ti}}, B::StridedVecOrMat{$Tv})
             conj = 1
             klu = parent(klu)
             stride(B, 1) == 1 || throw(ArgumentError("B must have unit strides"))
@@ -672,7 +675,7 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
             isok == 0 && kluerror(klu.common)
             return B
         end
-        function solve!(klu::Transpose{$Tv, KLUFactorization{$Tv, $Ti, M}}, B::StridedVecOrMat{$Tv}) where {M}
+        function solve!(klu::Transpose{$Tv, KLUFactorization{$Tv, $Ti}}, B::StridedVecOrMat{$Tv})
             conj = 0
             klu = parent(klu)
             stride(B, 1) == 1 || throw(ArgumentError("B must have unit strides"))
@@ -691,7 +694,7 @@ function solve(klu, B)
 end
 LinearAlgebra.ldiv!(klu::KLUFactorization{Tv}, B::StridedVecOrMat{Tv}) where {Tv<:KLUTypes} =
     solve!(klu, B)
-LinearAlgebra.ldiv!(klu::LinearAlgebra.AdjOrTrans{Tv, KLUFactorization{Tv, Ti, M}}, B::StridedVecOrMat{Tv}) where {Tv, Ti, M} =
+LinearAlgebra.ldiv!(klu::LinearAlgebra.AdjOrTrans{Tv, KLUFactorization{Tv, Ti}}, B::StridedVecOrMat{Tv}) where {Tv, Ti} =
     solve!(klu, B)
 function LinearAlgebra.ldiv!(klu::KLUFactorization{<:AbstractFloat}, B::StridedVecOrMat{<:Complex})
     imagX = solve(klu, imag(B))
@@ -699,7 +702,7 @@ function LinearAlgebra.ldiv!(klu::KLUFactorization{<:AbstractFloat}, B::StridedV
     map!(complex, B, realX, imagX)
 end
 
-function LinearAlgebra.ldiv!(klu::LinearAlgebra.AdjOrTrans{Tv, KLUFactorization{Tv, Ti, M}}, B::StridedVecOrMat{<:Complex}) where {Tv<:AbstractFloat, Ti, M}
+function LinearAlgebra.ldiv!(klu::LinearAlgebra.AdjOrTrans{Tv, KLUFactorization{Tv, Ti}}, B::StridedVecOrMat{<:Complex}) where {Tv<:AbstractFloat, Ti}
     imagX = solve(klu, imag(B))
     realX = solve(klu, real(B))
     map!(complex, B, realX, imagX)
