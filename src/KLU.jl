@@ -165,7 +165,7 @@ function _common(T)
     end
 end
 
-abstract type AbstractKLUFactorization{Tv} <: LinearAlgebra.Factorization{Tv} end
+abstract type AbstractKLUFactorization{Tv, Ti} <: LinearAlgebra.Factorization{Tv} end
 
 
 """
@@ -179,7 +179,7 @@ See the [`klu`](@ref) docs for more information.
 
 You typically should not construct this directly, instead use [`klu`](@ref).
 """
-mutable struct KLUFactorization{Tv<:KLUTypes, Ti<:KLUITypes} <: AbstractKLUFactorization{Tv}
+mutable struct KLUFactorization{Tv<:KLUTypes, Ti<:KLUITypes} <: AbstractKLUFactorization{Tv, Ti}
     common::Union{klu_l_common, klu_common}
     _symbolic::Ptr{Cvoid}
     _numeric::Ptr{Cvoid}
@@ -199,7 +199,8 @@ mutable struct KLUFactorization{Tv<:KLUTypes, Ti<:KLUITypes} <: AbstractKLUFacto
     end
 end
 
-function _free_symbolic(K::KLUFactorization{Tv, Ti}) where {Ti<:KLUITypes, Tv}
+function _free_symbolic(K::AbstractKLUFactorization{Tv, Ti}) where {Ti<:KLUITypes, Tv}
+    K._symbolic == C_NULL && return C_NULL
     if Ti == Int64
         klu_l_free_symbolic(Ref(Ptr{klu_l_symbolic}(K._symbolic)), Ref(K.common))
     elseif Ti == Int32
@@ -212,14 +213,13 @@ for Ti ∈ KLUIndexTypes, Tv ∈ KLUValueTypes
     klufree = _klu_name("free_numeric", Tv, Ti)
     ptr = _klu_name("numeric", :Float64, Ti)
     @eval begin
-        function _free_numeric(K::KLUFactorization{$Tv, $Ti})
+        function _free_numeric(K::AbstractKLUFactorization{$Tv, $Ti})
+            K._numeric == C_NULL && return C_NULL
             $klufree(Ref(Ptr{$ptr}(K._numeric)), Ref(K.common))
             K._numeric = C_NULL
         end
     end
 end
-
-
 
 function KLUFactorization(A::SparseMatrixCSC{Tv, Ti}) where {Tv<:KLUTypes, Ti<:KLUITypes}
     n = size(A, 1)
@@ -230,8 +230,8 @@ function KLUFactorization(A::SparseMatrixCSC{Tv, Ti}) where {Tv<:KLUTypes, Ti<:K
     return KLUFactorization(n, decrement(A.colptr), decrement(A.rowval), copy(A.nzval))
 end
 
-size(K::KLUFactorization) = (K.n, K.n)
-function size(K::KLUFactorization, dim::Integer)
+size(K::AbstractKLUFactorization) = (K.n, K.n)
+function size(K::AbstractKLUFactorization, dim::Integer)
     if dim < 1
         throw(ArgumentError("size: dimension $dim out of range"))
     elseif dim == 1 || dim == 2
@@ -241,17 +241,17 @@ function size(K::KLUFactorization, dim::Integer)
     end
 end
 
-nnz(K::KLUFactorization) = K.lnz + K.unz + K.nzoff
+nnz(K::AbstractKLUFactorization) = K.lnz + K.unz + K.nzoff
 
-Base.adjoint(K::KLUFactorization) = Adjoint(K)
-Base.transpose(K::KLUFactorization) = Transpose(K)
+Base.adjoint(K::AbstractKLUFactorization) = Adjoint(K)
+Base.transpose(K::AbstractKLUFactorization) = Transpose(K)
 
-function setproperty!(klu::KLUFactorization, ::Val{:(_symbolic)}, x)
+function setproperty!(klu::AbstractKLUFactorization, ::Val{:(_symbolic)}, x)
     _free_symbolic(klu)
     setfield!(klu, :(_symbolic), x)
 end
 
-function setproperty!(klu::KLUFactorization, ::Val{:(_numeric)}, x)
+function setproperty!(klu::AbstractKLUFactorization, ::Val{:(_numeric)}, x)
     _free_numeric(klu)
     setfield!(klu, :(_numeric), x)
 end
@@ -268,7 +268,7 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
     end
     @eval begin
         function _extract!(
-            klu::KLUFactorization{$Tv, $Ti};
+            klu::AbstractKLUFactorization{$Tv, $Ti};
             Lp = C_NULL, Li = C_NULL, Up = C_NULL, Ui = C_NULL, Fp = C_NULL, Fi = C_NULL,
             P = C_NULL, Q = C_NULL, R = C_NULL, Lx = C_NULL, Lz = C_NULL, Ux = C_NULL, Uz = C_NULL,
             Fx = C_NULL, Fz = C_NULL, Rs = C_NULL
@@ -284,7 +284,7 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
     end
 end
 
-function Base.propertynames(::KLUFactorization, private::Bool=false)
+function Base.propertynames(::AbstractKLUFactorization, private::Bool=false)
     publicnames = (:lnz, :unz, :nzoff, :L, :U, :F, :q, :p, :Rs, :symbolic, :numeric,)
     privatenames = (:nblocks, :maxblock,  :(_L), :(_U), :(_F))
     if private
@@ -294,7 +294,7 @@ function Base.propertynames(::KLUFactorization, private::Bool=false)
     end
 end
 
-function getproperty(klu::KLUFactorization{Tv, Ti}, s::Symbol) where {Tv<:KLUTypes, Ti<:KLUITypes}
+function getproperty(klu::AbstractKLUFactorization{Tv, Ti}, s::Symbol) where {Tv<:KLUTypes, Ti<:KLUITypes}
     # Forwards to the numeric struct:
     if s ∈ [:lnz, :unz, :nzoff]
         klu._numeric == C_NULL && throw(ArgumentError("This KLUFactorization has not yet been factored. Try `klu_factor!`."))
@@ -410,10 +410,10 @@ function getproperty(klu::KLUFactorization{Tv, Ti}, s::Symbol) where {Tv<:KLUTyp
     end
 end
 
-function LinearAlgebra.issuccess(K::KLUFactorization)
+function LinearAlgebra.issuccess(K::AbstractKLUFactorization)
     return K.common.status == KLU_OK && K._numeric != C_NULL
 end
-function show(io::IO, mime::MIME{Symbol("text/plain")}, K::KLUFactorization)
+function show(io::IO, mime::MIME{Symbol("text/plain")}, K::AbstractKLUFactorization)
     summary(io, K); println(io)
     if K._numeric != C_NULL
         println(io, "L factor:")
@@ -502,7 +502,7 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
 
         Cheaply estimate the reciprocal condition number. 
         """
-        function rcond(K::KLUFactorization{$Tv, $Ti})
+        function rcond(K::AbstractKLUFactorization{$Tv, $Ti})
             K._numeric == C_NULL && klu_factor!(K)
             ok = $rcond(K._symbolic, K._numeric, Ref(K.common))
             if ok == 0
@@ -646,7 +646,7 @@ end
 for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
     solve = _klu_name("solve", Tv, Ti)
     @eval begin
-        function solve!(klu::KLUFactorization{$Tv, $Ti}, B::StridedVecOrMat{$Tv})
+        function solve!(klu::AbstractKLUFactorization{$Tv, $Ti}, B::StridedVecOrMat{$Tv})
             stride(B, 1) == 1 || throw(ArgumentError("B must have unit strides"))
             klu._numeric == C_NULL && klu_factor!(klu)
             size(B, 1) == size(klu, 1) || throw(DimensionMismatch())
@@ -665,7 +665,7 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
         call = :($tsolve(klu._symbolic, klu._numeric, size(B, 1), size(B, 2), B, Ref(klu.common)))
     end
     @eval begin
-        function solve!(klu::Adjoint{$Tv, KLUFactorization{$Tv, $Ti}}, B::StridedVecOrMat{$Tv})
+        function solve!(klu::Adjoint{$Tv, K}, B::StridedVecOrMat{$Tv}) where {K<:AbstractKLUFactorization{$Tv, $Ti}}
             conj = 1
             klu = parent(klu)
             stride(B, 1) == 1 || throw(ArgumentError("B must have unit strides"))
@@ -675,7 +675,7 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
             isok == 0 && kluerror(klu.common)
             return B
         end
-        function solve!(klu::Transpose{$Tv, KLUFactorization{$Tv, $Ti}}, B::StridedVecOrMat{$Tv})
+        function solve!(klu::Transpose{$Tv, K}, B::StridedVecOrMat{$Tv}) where {K<: AbstractKLUFactorization{$Tv, $Ti}}
             conj = 0
             klu = parent(klu)
             stride(B, 1) == 1 || throw(ArgumentError("B must have unit strides"))
@@ -692,17 +692,17 @@ function solve(klu, B)
     X = copy(B)
     return solve!(klu, X)
 end
-LinearAlgebra.ldiv!(klu::KLUFactorization{Tv}, B::StridedVecOrMat{Tv}) where {Tv<:KLUTypes} =
+LinearAlgebra.ldiv!(klu::AbstractKLUFactorization{Tv}, B::StridedVecOrMat{Tv}) where {Tv<:KLUTypes} =
     solve!(klu, B)
-LinearAlgebra.ldiv!(klu::LinearAlgebra.AdjOrTrans{Tv, KLUFactorization{Tv, Ti}}, B::StridedVecOrMat{Tv}) where {Tv, Ti} =
+LinearAlgebra.ldiv!(klu::LinearAlgebra.AdjOrTrans{Tv, K}, B::StridedVecOrMat{Tv}) where {Tv, Ti, K<:AbstractKLUFactorization{Tv, Ti}} =
     solve!(klu, B)
-function LinearAlgebra.ldiv!(klu::KLUFactorization{<:AbstractFloat}, B::StridedVecOrMat{<:Complex})
+function LinearAlgebra.ldiv!(klu::AbstractKLUFactorization{<:AbstractFloat}, B::StridedVecOrMat{<:Complex})
     imagX = solve(klu, imag(B))
     realX = solve(klu, real(B))
     map!(complex, B, realX, imagX)
 end
 
-function LinearAlgebra.ldiv!(klu::LinearAlgebra.AdjOrTrans{Tv, KLUFactorization{Tv, Ti}}, B::StridedVecOrMat{<:Complex}) where {Tv<:AbstractFloat, Ti}
+function LinearAlgebra.ldiv!(klu::LinearAlgebra.AdjOrTrans{Tv, K}, B::StridedVecOrMat{<:Complex}) where {Tv<:AbstractFloat, Ti, K<:AbstractKLUFactorization{Tv, Ti}}
     imagX = solve(klu, imag(B))
     realX = solve(klu, real(B))
     map!(complex, B, realX, imagX)
