@@ -619,11 +619,11 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
     end
 end
 
-function klu!(K::KLUFactorization{ComplexF64}, nzval::Vector{U}) where {U<:Complex}
+function klu!(K::AbstractKLUFactorization{ComplexF64}, nzval::Vector{U}) where {U<:Complex}
     return klu!(K, convert(Vector{ComplexF64}, nzval))
 end
 
-function klu!(K::KLUFactorization{Float64}, nzval::Vector{U}) where {U<:AbstractFloat}
+function klu!(K::AbstractKLUFactorization{Float64}, nzval::Vector{U}) where {U<:AbstractFloat}
     return klu!(K, convert(Vector{Float64}, nzval))
 end
 
