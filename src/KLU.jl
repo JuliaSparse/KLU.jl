@@ -296,11 +296,11 @@ end
 
 function getproperty(klu::AbstractKLUFactorization{Tv, Ti}, s::Symbol) where {Tv<:KLUTypes, Ti<:KLUITypes}
     # Forwards to the numeric struct:
-    if s ∈ [:lnz, :unz, :nzoff]
+    if s ∈ (:lnz, :unz, :nzoff)
         klu._numeric == C_NULL && throw(ArgumentError("This KLUFactorization has not yet been factored. Try `klu_factor!`."))
         return getproperty(klu.numeric, s)
     end
-    if s ∈ [:nblocks, :maxblock]
+    if s ∈ (:nblocks, :maxblock)
         klu._symbolic == C_NULL && throw(ArgumentError("This KLUFactorization has not yet been analyzed. Try `klu_analyze!`."))
         return getproperty(klu.symbolic, s)
     end
@@ -321,7 +321,7 @@ function getproperty(klu::AbstractKLUFactorization{Tv, Ti}, s::Symbol) where {Tv
         end
     end
     # Non-overloaded parts:
-    if s ∉ [:L, :U, :F, :p, :q, :R, :Rs, :(_L), :(_U), :(_F)]
+    if s ∉ (:L, :U, :F, :p, :q, :R, :Rs, :(_L), :(_U), :(_F))
         return getfield(klu, s)
     end
     # Factor parts:
@@ -377,7 +377,7 @@ function getproperty(klu::AbstractKLUFactorization{Tv, Ti}, s::Symbol) where {Tv
         end
         return Fp, Fi, Fx, Fz
     end
-    if s ∈ [:q, :p, :R, :Rs]
+    if s ∈ (:q, :p, :R, :Rs)
         if s === :Rs
             out = Vector{Float64}(undef, klu.n)
         elseif s === :R
@@ -394,7 +394,7 @@ function getproperty(klu::AbstractKLUFactorization{Tv, Ti}, s::Symbol) where {Tv
         end
         return out
     end
-    if s ∈ [:L, :U, :F]
+    if s ∈ (:L, :U, :F)
         if s === :L
             p, i, x, z = klu._L
         elseif s === :U
