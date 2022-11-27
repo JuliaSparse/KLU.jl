@@ -1,5 +1,5 @@
 # KLU
-[![](https://img.shields.io/badge/docs-dev-blue.svg)](http://klu.juliasparse.org/dev/)
+[![](https://img.shields.io/badge/docs-dev-blue.svg)](https://klu.juliasparse.org/)
 
 A linear solver for sparse circuit simulation problems.
 This package wraps the [SuiteSparse](https://github.com/DrTimothyAldenDavis/SuiteSparse) solver KLU.
