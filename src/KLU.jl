@@ -87,6 +87,9 @@ using .LibKLU:
     
 using LinearAlgebra
 
+const AdjointFact = isdefined(LinearAlgebra, :AdjointFactorization) ? LinearAlgebra.AdjointFactorization : Adjoint
+const TransposeFact = isdefined(LinearAlgebra, :TransposeFactorization) ? LinearAlgebra.TransposeFactorization : Transpose
+
 const KLUTypes = Union{Float64, ComplexF64}
 const KLUValueTypes = (:Float64, :ComplexF64)
 
@@ -243,8 +246,10 @@ end
 
 nnz(K::AbstractKLUFactorization) = K.lnz + K.unz + K.nzoff
 
-Base.adjoint(K::AbstractKLUFactorization) = Adjoint(K)
-Base.transpose(K::AbstractKLUFactorization) = Transpose(K)
+if !isdefined(LinearAlgebra, :AdjointFactorization)
+    Base.adjoint(K::AbstractKLUFactorization) = Adjoint(K)
+    Base.transpose(K::AbstractKLUFactorization) = Transpose(K)
+end
 
 function setproperty!(klu::AbstractKLUFactorization, ::Val{:(_symbolic)}, x)
     _free_symbolic(klu)
@@ -665,7 +670,7 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
         call = :($tsolve(klu._symbolic, klu._numeric, size(B, 1), size(B, 2), B, Ref(klu.common)))
     end
     @eval begin
-        function solve!(klu::Adjoint{$Tv, K}, B::StridedVecOrMat{$Tv}) where {K<:AbstractKLUFactorization{$Tv, $Ti}}
+        function solve!(klu::AdjointFact{$Tv, K}, B::StridedVecOrMat{$Tv}) where {K<:AbstractKLUFactorization{$Tv, $Ti}}
             conj = 1
             klu = parent(klu)
             stride(B, 1) == 1 || throw(ArgumentError("B must have unit strides"))
@@ -675,7 +680,7 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
             isok == 0 && kluerror(klu.common)
             return B
         end
-        function solve!(klu::Transpose{$Tv, K}, B::StridedVecOrMat{$Tv}) where {K<: AbstractKLUFactorization{$Tv, $Ti}}
+        function solve!(klu::TransposeFact{$Tv, K}, B::StridedVecOrMat{$Tv}) where {K<: AbstractKLUFactorization{$Tv, $Ti}}
             conj = 0
             klu = parent(klu)
             stride(B, 1) == 1 || throw(ArgumentError("B must have unit strides"))
@@ -694,7 +699,7 @@ function solve(klu, B)
 end
 LinearAlgebra.ldiv!(klu::AbstractKLUFactorization{Tv}, B::StridedVecOrMat{Tv}) where {Tv<:KLUTypes} =
     solve!(klu, B)
-LinearAlgebra.ldiv!(klu::LinearAlgebra.AdjOrTrans{Tv, K}, B::StridedVecOrMat{Tv}) where {Tv, Ti, K<:AbstractKLUFactorization{Tv, Ti}} =
+LinearAlgebra.ldiv!(klu::Union{AdjointFact{Tv, K},TransposeFact{Tv, K}}, B::StridedVecOrMat{Tv}) where {Tv, Ti, K<:AbstractKLUFactorization{Tv, Ti}} =
     solve!(klu, B)
 function LinearAlgebra.ldiv!(klu::AbstractKLUFactorization{<:AbstractFloat}, B::StridedVecOrMat{<:Complex})
     imagX = solve(klu, imag(B))
@@ -702,7 +707,7 @@ function LinearAlgebra.ldiv!(klu::AbstractKLUFactorization{<:AbstractFloat}, B::
     map!(complex, B, realX, imagX)
 end
 
-function LinearAlgebra.ldiv!(klu::LinearAlgebra.AdjOrTrans{Tv, K}, B::StridedVecOrMat{<:Complex}) where {Tv<:AbstractFloat, Ti, K<:AbstractKLUFactorization{Tv, Ti}}
+function LinearAlgebra.ldiv!(klu::Union{AdjointFact{Tv, K},TransposeFact{Tv, K}}, B::StridedVecOrMat{<:Complex}) where {Tv<:AbstractFloat, Ti, K<:AbstractKLUFactorization{Tv, Ti}}
     imagX = solve(klu, imag(B))
     realX = solve(klu, real(B))
     map!(complex, B, realX, imagX)
