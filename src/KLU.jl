@@ -246,10 +246,10 @@ end
 
 nnz(K::AbstractKLUFactorization) = K.lnz + K.unz + K.nzoff
 
-if !isdefined(LinearAlgebra, :AdjointFactorization)
+if !isdefined(LinearAlgebra, :AdjointFactorization) # VERSION < v"1.10-"
     Base.adjoint(K::AbstractKLUFactorization) = Adjoint(K)
-    Base.transpose(K::AbstractKLUFactorization) = Transpose(K)
 end
+Base.transpose(K::AbstractKLUFactorization) = TransposeFact(K)
 
 function setproperty!(klu::AbstractKLUFactorization, ::Val{:(_symbolic)}, x)
     _free_symbolic(klu)
