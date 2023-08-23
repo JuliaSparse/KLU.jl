@@ -11,7 +11,7 @@ printer_blacklist = [
 ]
 
 [codegen]
-use_ccall_macro = true
+use_ccall_macro = false
 
 [codegen.macro]
 macro_mode = "basic"
