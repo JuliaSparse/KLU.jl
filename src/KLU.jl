@@ -6,8 +6,8 @@ import SparseArrays: nnz
 
 export klu, klu!
 
-include("../lib/klu_lib.jl")
-using .LibKLU
+const libklu = :libklu
+include("wrappers.jl")
 
 import Base: (\), size, getproperty, setproperty!, propertynames, show
 
@@ -25,66 +25,6 @@ function increment!(A::AbstractArray{T}) where T<:Integer
 end
 increment(A::AbstractArray{<:Integer}) = increment!(copy(A))
 
-using .LibKLU:
-    SuiteSparse_long,
-    klu_l_common,
-    klu_common,
-    klu_l_defaults,
-    klu_defaults,
-    klu_l_symbolic,
-    klu_symbolic,
-    klu_l_free_symbolic,
-    klu_free_symbolic,
-    klu_l_numeric,
-    klu_numeric,
-    klu_l_free_numeric,
-    klu_zl_free_numeric,
-    klu_free_numeric,
-    klu_z_free_numeric,
-    KLU_OK,
-    KLU_SINGULAR,
-    KLU_OUT_OF_MEMORY,
-    KLU_INVALID,
-    KLU_TOO_LARGE,
-    klu_l_analyze,
-    klu_analyze,
-    klu_l_factor,
-    klu_factor,
-    klu_zl_factor,
-    klu_z_factor,
-    klu_l_solve,
-    klu_zl_solve,
-    klu_solve,
-    klu_z_solve,
-    klu_l_tsolve,
-    klu_zl_tsolve,
-    klu_tsolve,
-    klu_z_tsolve,
-    klu_l_extract,
-    klu_zl_extract,
-    klu_extract,
-    klu_z_extract,
-    klu_l_sort,
-    klu_zl_sort,
-    klu_sort,
-    klu_z_sort,
-    klu_refactor,
-    klu_z_refactor,
-    klu_l_refactor,
-    klu_zl_refactor,
-    klu_rgrowth,
-    klu_z_rgrowth,
-    klu_l_rgrowth,
-    klu_zl_rgrowth,
-    klu_rcond,
-    klu_z_rcond,
-    klu_l_rcond,
-    klu_zl_rcond,
-    klu_condest,
-    klu_z_condest,
-    klu_l_condest,
-    klu_zl_condest
-    
 using LinearAlgebra
 
 const AdjointFact = isdefined(LinearAlgebra, :AdjointFactorization) ? LinearAlgebra.AdjointFactorization : Adjoint
@@ -93,7 +33,7 @@ const TransposeFact = isdefined(LinearAlgebra, :TransposeFactorization) ? Linear
 const KLUTypes = Union{Float64, ComplexF64}
 const KLUValueTypes = (:Float64, :ComplexF64)
 
-if sizeof(SuiteSparse_long) == 4
+if sizeof(Int) == 4
     const KLUITypes = Int32
     const KLUIndexTypes = (:Int32,)
 else
@@ -505,7 +445,7 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
         """
             rcond(K::KLUFactorization)
 
-        Cheaply estimate the reciprocal condition number. 
+        Cheaply estimate the reciprocal condition number.
         """
         function rcond(K::AbstractKLUFactorization{$Tv, $Ti})
             K._numeric == C_NULL && klu_factor!(K)
@@ -636,8 +576,8 @@ function klu!(K::KLUFactorization{U}, S::SparseMatrixCSC{U}) where {U}
     size(K) == size(S) || throw(ArgumentError("Sizes of K and S must match."))
     increment!(K.colptr)
     increment!(K.rowval)
-    K.colptr == S.colptr && K.rowval == S.rowval || 
-        (decrement!(K.colptr); decrement!(K.rowval); 
+    K.colptr == S.colptr && K.rowval == S.rowval ||
+        (decrement!(K.colptr); decrement!(K.rowval);
         throw(ArgumentError("The pattern of the original matrix must match the pattern of the refactor."))
         )
     decrement!(K.colptr)

@@ -20,37 +20,13 @@ klu_h = joinpath(include_dir, "klu.h")
 # load common option
 options = load_options(joinpath(@__DIR__, "generator.toml"))
 
-# run generator for all platforms
-for target in JLLEnvs.JLL_ENV_TRIPLES
-    @info "processing $target"
+# run generator. Header files are not platform specific so we have only one.
+options["general"]["output_file_path"] = joinpath(@__DIR__, "..", "src", "wrappers.jl")
+args = get_default_args()
+push!(args, "-I$include_dir")
 
-    options["general"]["output_file_path"] = joinpath(@__DIR__, "..", "lib", "$target.jl")
+header_files = [klu_h]
 
-    args = get_default_args(target)
-    push!(args, "-I$include_dir")
-    if startswith(target, "x86_64") || startswith(target, "powerpc64le") || startswith(target, "aarch64")
-        push!(args, "-DSUN64 -DLONGBLAS='long long'")
-    end
+ctx = create_context(header_files, args, options)
 
-    header_files = [klu_h]
-
-    ctx = create_context(header_files, args, options)
-
-    build!(ctx, BUILDSTAGE_NO_PRINTING)
-
-    # custom rewriter
-    function rewrite!(dag::ExprDAG)
-        replace!(get_nodes(dag)) do node
-            filename = normpath(Clang.get_filename(node.cursor))
-            if !contains(filename, "klu")
-                return ExprNode(node.id, Generators.Skip(), node.cursor, Expr[], node.adj)
-            end
-            return node
-        end
-    end
-
-    rewrite!(ctx.dag)
-
-    # print
-    build!(ctx, BUILDSTAGE_PRINTING_ONLY)
-end
+build!(ctx)
