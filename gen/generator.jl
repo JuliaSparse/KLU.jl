@@ -29,20 +29,4 @@ header_files = [klu_h]
 
 ctx = create_context(header_files, args, options)
 
-build!(ctx, BUILDSTAGE_PRINTING_ONLY)
-
-# custom rewriter
-function rewrite!(dag::ExprDAG)
-   replace!(get_nodes(dag)) do node
-   filename = normpath(Clang.get_filename(node.cursor))
-   if !contains(filename, "klu")
-      return ExprNode(node.id, Generators.Skip(), node.cursor, Expr[], node.adj)
-   end
-      return node
-   end
-end
-
-rewrite!(ctx.dag)
-
-# print
-build!(ctx, BUILDSTAGE_PRINTING_ONLY)
+build!(ctx)
