@@ -40,25 +40,4 @@ julia> x = factor \ b
 
 ## Citing this package
 
-Please cite both [SuiteSparse](https://github.com/DrTimothyAldenDavis/SuiteSparse) as well as KLU:
-
-```bibtex
-@article{10.1145/1824801.1824814,
-author = {Davis, Timothy A. and Palamadai Natarajan, Ekanathan},
-title = {Algorithm 907: KLU, A Direct Sparse Solver for Circuit Simulation Problems},
-year = {2010},
-issue_date = {September 2010},
-publisher = {Association for Computing Machinery},
-address = {New York, NY, USA},
-volume = {37},
-number = {3},
-issn = {0098-3500},
-url = {https://doi.org/10.1145/1824801.1824814},
-doi = {10.1145/1824801.1824814},
-journal = {ACM Trans. Math. Softw.},
-month = {sep},
-articleno = {36},
-numpages = {17},
-keywords = {LU factorization, circuit simulation, sparse matrices}
-}
-```
+Please cite both [SuiteSparse](https://github.com/DrTimothyAldenDavis/SuiteSparse/blob/dev/CITATION.bib) as well as [KLU](https://github.com/JuliaSparse/KLU.jl/blob/main/CITATION.bib):
