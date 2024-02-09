@@ -6,7 +6,7 @@ import SparseArrays: nnz
 
 export klu, klu!
 
-include("../lib/klu_lib.jl")
+include("klu_lib.jl")
 using .LibKLU
 
 import Base: (\), size, getproperty, setproperty!, propertynames, show
@@ -84,7 +84,7 @@ using .LibKLU:
     klu_z_condest,
     klu_l_condest,
     klu_zl_condest
-    
+
 using LinearAlgebra
 
 const AdjointFact = isdefined(LinearAlgebra, :AdjointFactorization) ? LinearAlgebra.AdjointFactorization : Adjoint
@@ -505,7 +505,7 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
         """
             rcond(K::KLUFactorization)
 
-        Cheaply estimate the reciprocal condition number. 
+        Cheaply estimate the reciprocal condition number.
         """
         function rcond(K::AbstractKLUFactorization{$Tv, $Ti})
             K._numeric == C_NULL && klu_factor!(K)
@@ -636,8 +636,8 @@ function klu!(K::KLUFactorization{U}, S::SparseMatrixCSC{U}) where {U}
     size(K) == size(S) || throw(ArgumentError("Sizes of K and S must match."))
     increment!(K.colptr)
     increment!(K.rowval)
-    K.colptr == S.colptr && K.rowval == S.rowval || 
-        (decrement!(K.colptr); decrement!(K.rowval); 
+    K.colptr == S.colptr && K.rowval == S.rowval ||
+        (decrement!(K.colptr); decrement!(K.rowval);
         throw(ArgumentError("The pattern of the original matrix must match the pattern of the refactor."))
         )
     decrement!(K.colptr)
