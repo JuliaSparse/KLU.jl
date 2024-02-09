@@ -2,9 +2,13 @@ using Documenter
 using KLU
 
 makedocs(
-    sitename = "KLU",
+    modules = [KLU],
+    sitename = "Interface to the KLU solver from SuiteSparse",
+    authors = "Raye Kimmerer, Viral B. Shah",
     format = Documenter.HTML(),
-    modules = [KLU];
+    pages = ["KLU" => "index.md",
+             "Reference" => "functions_list.md"
+             ],
     warnonly = [:missing_docs, :cross_references],
 )
 

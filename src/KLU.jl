@@ -512,7 +512,7 @@ The individual components of the factorization `K` can be accessed by indexing:
 
 The relation between `K` and `A` is
 
-`K.L * K.U + K.F  == K.Rs `\\` A[K.p, K.q]`
+`K.L * K.U + K.F  == K.Rs ` \\ ` A[K.p, K.q]`
 
 `K` further supports the following functions:
 
