@@ -115,3 +115,11 @@ end
     )
     @test klu(A).F.nzval ≈ [0.20623152093700403, 0.09038754099133628, 1.0]
 end
+
+@testset "check=false" begin
+    for A in sparse.((Float64[1 2; 0 0], ComplexF64[1 2; 0 0]))
+        @test_throws SingularException klu(A)
+        @test !issuccess(klu(A; check = false))
+        @test issuccess(klu(A; allowsingular=true); allowsingular=true)
+    end
+end

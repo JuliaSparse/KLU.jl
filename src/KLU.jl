@@ -355,8 +355,8 @@ function getproperty(klu::AbstractKLUFactorization{Tv, Ti}, s::Symbol) where {Tv
     end
 end
 
-function LinearAlgebra.issuccess(K::AbstractKLUFactorization)
-    return K.common.status == KLU_OK && K._numeric != C_NULL
+function LinearAlgebra.issuccess(K::AbstractKLUFactorization; allowsingular=false)
+    return (allowsingular ? K.common.status >= KLU_OK : K.common.status == KLU_OK) && K._numeric != C_NULL
 end
 function show(io::IO, mime::MIME{Symbol("text/plain")}, K::AbstractKLUFactorization)
     summary(io, K); println(io)
@@ -375,14 +375,14 @@ function show(io::IO, mime::MIME{Symbol("text/plain")}, K::AbstractKLUFactorizat
     end
 end
 
-function klu_analyze!(K::KLUFactorization{Tv, Ti}) where {Tv, Ti<:KLUITypes}
+function klu_analyze!(K::KLUFactorization{Tv, Ti}; check=true) where {Tv, Ti<:KLUITypes}
     if K._symbolic != C_NULL return K end
     if Ti == Int64
         sym = klu_l_analyze(K.n, K.colptr, K.rowval, Ref(K.common))
     else
         sym = klu_analyze(K.n, K.colptr, K.rowval, Ref(K.common))
     end
-    if sym == C_NULL
+    if sym == C_NULL && check
         kluerror(K.common)
     else
         K._symbolic = sym
@@ -391,14 +391,14 @@ function klu_analyze!(K::KLUFactorization{Tv, Ti}) where {Tv, Ti<:KLUITypes}
 end
 
 # User provided permutation vectors:
-function klu_analyze!(K::KLUFactorization{Tv, Ti}, P::Vector{Ti}, Q::Vector{Ti}) where {Tv, Ti<:KLUITypes}
+function klu_analyze!(K::KLUFactorization{Tv, Ti}, P::Vector{Ti}, Q::Vector{Ti}; check=true) where {Tv, Ti<:KLUITypes}
     if K._symbolic != C_NULL return K end
     if Ti == Int64
         sym = klu_l_analyze_given(K.n, K.colptr, K.rowval, P, Q, Ref(K.common))
     else
         sym = klu_analyze_given(K.n, K.colptr, K.rowval, P, Q, Ref(K.common))
     end
-    if sym == C_NULL
+    if sym == C_NULL && check
         kluerror(K.common)
     else
         K._symbolic = sym
@@ -409,14 +409,25 @@ end
 for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
     factor = _klu_name("factor", Tv, Ti)
     @eval begin
-        function klu_factor!(K::KLUFactorization{$Tv, $Ti})
-            K._symbolic == C_NULL  && klu_analyze!(K)
-            num = $factor(K.colptr, K.rowval, K.nzval, K._symbolic, Ref(K.common))
-            if num == C_NULL
+        function klu_factor!(K::KLUFactorization{$Tv, $Ti}; check=true, allowsingular=false)
+            K._symbolic == C_NULL && K.common.status >= KLU_OK && klu_analyze!(K)
+            if K._symbolic != C_NULL && K.common.status >= KLU_OK
+                K.common.halt_if_singular = !allowsingular && check
+                num = $factor(K.colptr, K.rowval, K.nzval, K._symbolic, Ref(K.common))
+                K.common.halt_if_singular = true
+            else
+                num = C_NULL
+            end
+            if num == C_NULL && check
                 kluerror(K.common)
             else
-                K._numeric = num
+                if allowsingular
+                    K.common.status < KLU_OK && check && kluerror(K.common)
+                else
+                    (K.common.status == KLU_OK) || (check && kluerror(K.common))
+                end
             end
+            K._numeric = num
             return K
         end
     end
@@ -476,11 +487,17 @@ end
 
 
 """
-    klu_factor!(K::KLUFactorization)
+    klu_factor!(K::KLUFactorization; check=true, allowsingular=false) -> K::KLUFactorization
 
 Factor `K` into components `K.L`, `K.U`, and `K.F`.
 This function will perform both the symbolic and numeric steps of factoriation on an
 existing `KLUFactorization` instance.
+
+# Arguments
+  - `K::KLUFactorization`: The matrix factorization object to be factored.
+  - `check::Bool`: If `true` (default) check for errors after the factorization. If `false` errors must be checked by the user with `klu.common.status`.
+  - `allowsingular::Bool`: If `true` (default `false`) allow the factorization to proceed even if the matrix is singular. Note that this will allow for
+  silent divide by zero errors in subsequent `solve!` or `ldiv!` calls if singularity is not checked by the user with `klu.common.status == KLU.KLU_SINGULAR`
 
 The `K.common` struct can be used to modify certain options and parameters, see the
 [KLU documentation](https://github.com/DrTimothyAldenDavis/SuiteSparse/raw/master/KLU/Doc/KLU_UserGuide.pdf)
@@ -518,6 +535,12 @@ The relation between `K` and `A` is
 
 - `LinearAlgebra.\\`
 
+# Arguments
+  - `A::SparseMatrixCSC` or `n::Integer`, `colptr::Vector{Ti}`, `rowval::Vector{Ti}`, `nzval::Vector{Tv}`: The sparse matrix or the zero-based sparse matrix components to be factored.
+  - `check::Bool`: If `true` (default) check for errors after the factorization. If `false` errors must be checked by the user with `klu.common.status`.
+  - `allowsingular::Bool`: If `true` (default `false`) allow the factorization to proceed even if the matrix is singular. Note that this will allow for
+  silent divide by zero errors in subsequent `solve!` or `ldiv!` calls if singularity is not checked by the user with `klu.common.status == KLU.KLU_SINGULAR`
+
 !!! note
     `klu(A::SparseMatrixCSC)` uses the KLU[^ACM907] library that is part of
     SuiteSparse. As this library only supports sparse matrices with [`Float64`](@ref) or
@@ -526,36 +549,68 @@ The relation between `K` and `A` is
 
 [^ACM907]: Davis, Timothy A., & Palamadai Natarajan, E. (2010). Algorithm 907: KLU, A Direct Sparse Solver for Circuit Simulation Problems. ACM Trans. Math. Softw., 37(3). doi:10.1145/1824801.1824814
 """
-function klu(n, colptr::Vector{Ti}, rowval::Vector{Ti}, nzval::Vector{Tv}) where {Ti<:KLUITypes, Tv<:AbstractFloat}
+function klu(n, colptr::Vector{Ti}, rowval::Vector{Ti}, nzval::Vector{Tv}; check=true, allowsingular=false) where {Ti<:KLUITypes, Tv<:AbstractFloat}
     if Tv != Float64
         nzval = convert(Vector{Float64}, nzval)
     end
     K = KLUFactorization(n, colptr, rowval, nzval)
-    return klu_factor!(K)
+    return klu_factor!(K; check, allowsingular)
 end
 
-function klu(n, colptr::Vector{Ti}, rowval::Vector{Ti}, nzval::Vector{Tv}) where {Ti<:KLUITypes, Tv<:Complex}
+function klu(n, colptr::Vector{Ti}, rowval::Vector{Ti}, nzval::Vector{Tv}; check=true, allowsingular=false) where {Ti<:KLUITypes, Tv<:Complex}
     if Tv != ComplexF64
         nzval = convert(Vector{ComplexF64}, nzval)
     end
     K = KLUFactorization(n, colptr, rowval, nzval)
-    return klu_factor!(K)
+    return klu_factor!(K; check, allowsingular)
 end
 
-function klu(A::SparseMatrixCSC{Tv, Ti}) where {Tv<:Union{AbstractFloat, Complex}, Ti<:KLUITypes}
+function klu(A::SparseMatrixCSC{Tv, Ti}; check=true, allowsingular=false) where {Tv<:Union{AbstractFloat, Complex}, Ti<:KLUITypes}
     n = size(A, 1)
     n == size(A, 2) || throw(DimensionMismatch())
-    return klu(n, decrement(A.colptr), decrement(A.rowval), A.nzval)
+    return klu(n, decrement(A.colptr), decrement(A.rowval), A.nzval; check, allowsingular)
 end
+
+"""
+    klu!(K::KLUFactorization, A::SparseMatrixCSC; check=true, allowsingular=false) -> K::KLUFactorization
+    klu(K::KLUFactorization, nzval::Vector{Tv}; check=true, allowsingular=false) -> K::KLUFactorization
+
+Recompute the KLU factorization `K` using the values of `A` or `nzval`. The pattern of the original
+matrix used to create `K` must match the pattern of `A`. 
+
+For sparse `A` with real or complex element type, the return type of `K` is
+`KLUFactorization{Tv, Ti}`, with `Tv` = `Float64` or `ComplexF64`
+respectively and `Ti` is an integer type (`Int32` or `Int64`).
+
+See also: [`klu`](@ref)
+
+# Arguments
+  - `K::KLUFactorization`: The matrix factorization object, previously created by a call to `klu`, to be re-factored.
+  - `A::SparseMatrixCSC` or `n::Integer`, `colptr::Vector{Ti}`, `rowval::Vector{Ti}`, `nzval::Vector{Tv}`: The sparse matrix or the zero-based sparse matrix components to be factored.
+  - `check::Bool`: If `true` (default) check for errors after the factorization. If `false` errors must be checked by the user with `klu.common.status`.
+  - `allowsingular::Bool`: If `true` (default `false`) allow the factorization to proceed even if the matrix is singular. Note that this will allow for
+  silent divide by zero errors in subsequent `solve!` or `ldiv!` calls if singularity is not checked by the user with `klu.common.status == KLU.KLU_SINGULAR`
+
+!!! note
+    `klu(A::SparseMatrixCSC)` uses the KLU[^ACM907] library that is part of
+    SuiteSparse. As this library only supports sparse matrices with [`Float64`](@ref) or
+    `ComplexF64` elements, `lu` converts `A` into a copy that is of type
+    `SparseMatrixCSC{Float64}` or `SparseMatrixCSC{ComplexF64}` as appropriate.
+
+[^ACM907]: Davis, Timothy A., & Palamadai Natarajan, E. (2010). Algorithm 907: KLU, A Direct Sparse Solver for Circuit Simulation Problems. ACM Trans. Math. Softw., 37(3). doi:10.1145/1824801.1824814
+"""
+klu!
 
 for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
     refactor = _klu_name("refactor", Tv, Ti)
     @eval begin
-        function klu!(K::KLUFactorization{$Tv, $Ti}, nzval::Vector{$Tv})
+        function klu!(K::KLUFactorization{$Tv, $Ti}, nzval::Vector{$Tv}; check=true, allowsingular=false)
             length(nzval) != length(K.nzval)  && throw(DimensionMismatch())
             K.nzval = nzval
+            K.common.halt_if_singular = !allowsingular && check
             ok = $refactor(K.colptr, K.rowval, K.nzval, K._symbolic, K._numeric, Ref(K.common))
-            if ok == 1
+            K.common.halt_if_singular = true
+            if (ok == 1 || !check || (allowsingular && K.common.status >= KLU_OK))
                 return K
             else
                 kluerror(K.common)
@@ -564,39 +619,60 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
     end
 end
 
-function klu!(K::AbstractKLUFactorization{ComplexF64}, nzval::Vector{U}) where {U<:Complex}
-    return klu!(K, convert(Vector{ComplexF64}, nzval))
+function klu!(K::AbstractKLUFactorization{ComplexF64}, nzval::Vector{U}; check=true, allowsingular=false) where {U<:Complex}
+    return klu!(K, convert(Vector{ComplexF64}, nzval); check, allowsingular)
 end
 
-function klu!(K::AbstractKLUFactorization{Float64}, nzval::Vector{U}) where {U<:AbstractFloat}
-    return klu!(K, convert(Vector{Float64}, nzval))
+function klu!(K::AbstractKLUFactorization{Float64}, nzval::Vector{U}; check=true, allowsingular=false) where {U<:AbstractFloat}
+    return klu!(K, convert(Vector{Float64}, nzval); check, allowsingular)
 end
 
-function klu!(K::KLUFactorization{U}, S::SparseMatrixCSC{U}) where {U}
+function klu!(K::KLUFactorization{U}, S::SparseMatrixCSC{U}; check=true, allowsingular=false) where {U}
     size(K) == size(S) || throw(ArgumentError("Sizes of K and S must match."))
     increment!(K.colptr)
     increment!(K.rowval)
+    # what should happen here when check = false? This is not really a KLU error code.
     K.colptr == S.colptr && K.rowval == S.rowval ||
         (decrement!(K.colptr); decrement!(K.rowval);
         throw(ArgumentError("The pattern of the original matrix must match the pattern of the refactor."))
         )
     decrement!(K.colptr)
     decrement!(K.rowval)
-    return klu!(K, S.nzval)
+    return klu!(K, S.nzval; check, allowsingular)
 end
-
 
 #B is the modified argument here. To match with the math it should be (klu, B). But convention is
 # modified first. Thoughts?
+
+# with check=false it *is technically* possible to enter a seriously invalid state wherein `klu.common`
+# is undefined. I don't think this is possible in practice though, since we throw on invalid `common` on construction.
+"""
+    solve!(klu::Union{KLUFactorization, AdjointFact{Tv, KLUFactorization}, TransposeFact{Tv, KLUFactorization}}, B::StridedVecOrMat) -> B
+
+Solve the linear system `AX = B` or `A'X = B` where using the matrix facotrization `klu` and right-hand side `B`.
+
+This function overwrites `B` with the solution `X`, for a new solution vector `X` use `solve(klu, B)`.
+
+# Arguments
+  - `klu::KLUFactorization`: The matrix factorization of `A` to use in the solution.
+  - `B::StridedVecOrMat`: The right-hand side of the linear system.
+  - `check::Bool`: If `true` (default) check for errors after the solve. If `false` errors must be checked using `klu.common.status`. The return value of this function is always `B`, so the status of the solve *must* be checked using the factorization object itself when `check=false`.
+
+!!! warning "Solve with a singular factorization object"
+    If the factorization object `klu` has `klu.common.status == KLU.KLU_SINGULAR` then the `solve!` or `ldiv!` will result in a silent divide by zero error.
+
+    This status should be checked by the user before solve calls if singularity checks were disabled on factorization using `check=false` or `allowsingular=true`.
+"""
+solve!
 for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
     solve = _klu_name("solve", Tv, Ti)
     @eval begin
-        function solve!(klu::AbstractKLUFactorization{$Tv, $Ti}, B::StridedVecOrMat{$Tv})
+        function solve!(klu::AbstractKLUFactorization{$Tv, $Ti}, B::StridedVecOrMat{$Tv}; check=true)
             stride(B, 1) == 1 || throw(ArgumentError("B must have unit strides"))
             klu._numeric == C_NULL && klu_factor!(klu)
             size(B, 1) == size(klu, 1) || throw(DimensionMismatch())
             isok = $solve(klu._symbolic, klu._numeric, size(B, 1), size(B, 2), B, Ref(klu.common))
-            isok == 0 && kluerror(klu.common)
+            isok == 0 && check && kluerror(klu.common)
             return B
         end
     end
@@ -610,33 +686,35 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
         call = :($tsolve(klu._symbolic, klu._numeric, size(B, 1), size(B, 2), B, Ref(klu.common)))
     end
     @eval begin
-        function solve!(klu::AdjointFact{$Tv, K}, B::StridedVecOrMat{$Tv}) where {K<:AbstractKLUFactorization{$Tv, $Ti}}
+        function solve!(klu::AdjointFact{$Tv, K}, B::StridedVecOrMat{$Tv}; check=true) where {K<:AbstractKLUFactorization{$Tv, $Ti}}
             conj = 1
             klu = parent(klu)
             stride(B, 1) == 1 || throw(ArgumentError("B must have unit strides"))
             klu._numeric == C_NULL && klu_factor!(klu)
             size(B, 1) == size(klu, 1) || throw(DimensionMismatch())
             isok = $call
-            isok == 0 && kluerror(klu.common)
+            isok == 0 && check && kluerror(klu.common)
             return B
         end
-        function solve!(klu::TransposeFact{$Tv, K}, B::StridedVecOrMat{$Tv}) where {K<: AbstractKLUFactorization{$Tv, $Ti}}
+        function solve!(klu::TransposeFact{$Tv, K}, B::StridedVecOrMat{$Tv}; check=true) where {K<: AbstractKLUFactorization{$Tv, $Ti}}
             conj = 0
             klu = parent(klu)
             stride(B, 1) == 1 || throw(ArgumentError("B must have unit strides"))
             klu._numeric == C_NULL && klu_factor!(klu)
             size(B, 1) == size(klu, 1) || throw(DimensionMismatch())
             isok = $call
-            isok == 0 && kluerror(klu.common)
+            isok == 0 && check && kluerror(klu.common)
             return B
         end
     end
 end
 
-function solve(klu, B)
+function solve(klu, B; check=true)
     X = copy(B)
-    return solve!(klu, X)
+    return solve!(klu, X; check)
 end
+
+# we are not adding check to `ldiv!` since it is not in the contract.
 LinearAlgebra.ldiv!(klu::AbstractKLUFactorization{Tv}, B::StridedVecOrMat{Tv}) where {Tv<:KLUTypes} =
     solve!(klu, B)
 LinearAlgebra.ldiv!(klu::Union{AdjointFact{Tv, K},TransposeFact{Tv, K}}, B::StridedVecOrMat{Tv}) where {Tv, Ti, K<:AbstractKLUFactorization{Tv, Ti}} =
