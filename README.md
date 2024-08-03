@@ -40,4 +40,4 @@ julia> x = factor \ b
 
 ## Citing this package
 
-Please cite both [SuiteSparse](https://github.com/DrTimothyAldenDavis/SuiteSparse/blob/dev/CITATION.bib) as well as [KLU](https://github.com/JuliaSparse/KLU.jl/blob/main/CITATION.bib):
+Please cite both [SuiteSparse](https://github.com/DrTimothyAldenDavis/SuiteSparse/blob/dev/CITATION.bib) as well as [KLU](https://github.com/JuliaSparse/KLU.jl/blob/main/CITATION.bib).
