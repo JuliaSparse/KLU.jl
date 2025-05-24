@@ -8,6 +8,7 @@ export klu, klu!
 
 const libklu = :libklu
 include("wrappers.jl")
+include("type_resolution.jl")
 
 import Base: (\), size, getproperty, setproperty!, propertynames, show
 
@@ -87,20 +88,25 @@ macro isok(A)
     :(kluerror($(esc(A))))
 end
 
+# this ought to be handled via multiple dispatch, so it can be done at compile time.
 function _klu_name(name, Tv, Ti)
     outname = "klu_" * (Tv === :Float64 ? "" : "z") * (Ti === :Int64 ? "l_" : "_") * name
     return Symbol(replace(outname, "__"=>"_"))
 end
-function _common(T)
-    if T == Int64
-        common = klu_l_common()
-        ok = klu_l_defaults(Ref(common))
-    elseif T == Int32
-        common = klu_common()
-        ok = klu_defaults(Ref(common))
+
+function _common(::Type{Int64})
+    common = klu_l_common()
+    ok = klu_l_defaults(Ref(common))
+    if ok == 1
+        return common
     else
-        throw(ArgumentError("Index type must be Int64 or Int32"))
+        throw(ErrorException("Could not initialize common struct."))
     end
+end
+
+function _common(::Type{Int32})
+    common = klu_common()
+    ok = klu_defaults(Ref(common))
     if ok == 1
         return common
     else
@@ -144,24 +150,14 @@ end
 
 function _free_symbolic(K::AbstractKLUFactorization{Tv, Ti}) where {Ti<:KLUITypes, Tv}
     K._symbolic == C_NULL && return C_NULL
-    if Ti == Int64
-        klu_l_free_symbolic(Ref(Ptr{klu_l_symbolic}(K._symbolic)), Ref(K.common))
-    elseif Ti == Int32
-        klu_free_symbolic(Ref(Ptr{klu_symbolic}(K._symbolic)), Ref(K.common))
-    end
+    __free_sym(Ti, Ref(Ptr{__symType(Ti)}(K._symbolic)), Ref(K.common))
     K._symbolic = C_NULL
 end
 
-for Ti ∈ KLUIndexTypes, Tv ∈ KLUValueTypes
-    klufree = _klu_name("free_numeric", Tv, Ti)
-    ptr = _klu_name("numeric", :Float64, Ti)
-    @eval begin
-        function _free_numeric(K::AbstractKLUFactorization{$Tv, $Ti})
-            K._numeric == C_NULL && return C_NULL
-            $klufree(Ref(Ptr{$ptr}(K._numeric)), Ref(K.common))
-            K._numeric = C_NULL
-        end
-    end
+function _free_numeric(K::AbstractKLUFactorization{Tv, Ti}) where {Tv<:KLUTypes, Ti<:KLUITypes}
+    K._numeric == C_NULL && return C_NULL
+    __free_num(Tv, Ti, Ref(Ptr{__numType(Ti)}(K._numeric)), Ref(K.common))
+    K._numeric = C_NULL
 end
 
 function KLUFactorization(A::SparseMatrixCSC{Tv, Ti}) where {Tv<:KLUTypes, Ti<:KLUITypes}
@@ -377,11 +373,7 @@ end
 
 function klu_analyze!(K::KLUFactorization{Tv, Ti}; check=true) where {Tv, Ti<:KLUITypes}
     if K._symbolic != C_NULL return K end
-    if Ti == Int64
-        sym = klu_l_analyze(K.n, K.colptr, K.rowval, Ref(K.common))
-    else
-        sym = klu_analyze(K.n, K.colptr, K.rowval, Ref(K.common))
-    end
+    sym = __analyze(Ti, K.n, K.colptr, K.rowval, Ref(K.common))
     if sym == C_NULL && check
         kluerror(K.common)
     else
@@ -393,11 +385,7 @@ end
 # User provided permutation vectors:
 function klu_analyze!(K::KLUFactorization{Tv, Ti}, P::Vector{Ti}, Q::Vector{Ti}; check=true) where {Tv, Ti<:KLUITypes}
     if K._symbolic != C_NULL return K end
-    if Ti == Int64
-        sym = klu_l_analyze_given(K.n, K.colptr, K.rowval, P, Q, Ref(K.common))
-    else
-        sym = klu_analyze_given(K.n, K.colptr, K.rowval, P, Q, Ref(K.common))
-    end
+    sym = __analyze!(K.n, K.colptr, K.rowval, P, Q, Ref(K.common))
     if sym == C_NULL && check
         kluerror(K.common)
     else
@@ -406,85 +394,74 @@ function klu_analyze!(K::KLUFactorization{Tv, Ti}, P::Vector{Ti}, Q::Vector{Ti};
     return K
 end
 
-for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
-    factor = _klu_name("factor", Tv, Ti)
-    @eval begin
-        function klu_factor!(K::KLUFactorization{$Tv, $Ti}; check=true, allowsingular=false)
-            K._symbolic == C_NULL && K.common.status >= KLU_OK && klu_analyze!(K)
-            if K._symbolic != C_NULL && K.common.status >= KLU_OK
-                K.common.halt_if_singular = !allowsingular && check
-                num = $factor(K.colptr, K.rowval, K.nzval, K._symbolic, Ref(K.common))
-                K.common.halt_if_singular = true
-            else
-                num = C_NULL
-            end
-            if num == C_NULL && check
-                kluerror(K.common)
-            else
-                if allowsingular
-                    K.common.status < KLU_OK && check && kluerror(K.common)
-                else
-                    (K.common.status == KLU_OK) || (check && kluerror(K.common))
-                end
-            end
-            K._numeric = num
-            return K
+
+function klu_factor!(K::KLUFactorization{Tv, Ti}; check=true, allowsingular=false) where {Tv<:KLUTypes, Ti<:KLUITypes}
+    K._symbolic == C_NULL && K.common.status >= KLU_OK && klu_analyze!(K)
+    if K._symbolic != C_NULL && K.common.status >= KLU_OK
+        K.common.halt_if_singular = !allowsingular && check
+        num = __factor(Tv, Ti, K.colptr, K.rowval, K.nzval, K._symbolic, Ref(K.common))
+        K.common.halt_if_singular = true
+    else
+        num = C_NULL
+    end
+    if num == C_NULL && check
+        kluerror(K.common)
+    else
+        if allowsingular
+            K.common.status < KLU_OK && check && kluerror(K.common)
+        else
+            (K.common.status == KLU_OK) || (check && kluerror(K.common))
         end
+    end
+    K._numeric = num
+    return K
+end
+
+
+"""
+    rgrowth(K::KLUFactorization)
+
+Calculate the reciprocal pivot growth.
+"""
+function rgrowth(K::KLUFactorization{Tv, Ti}) where {Tv<:KLUTypes, Ti<:KLUITypes}
+    K._numeric == C_NULL && klu_factor!(K)
+    ok = __rgrowth(Tv, Ti, K.colptr, K.rowval, K.nzval, K._symbolic, K._numeric, Ref(K.common))
+    if ok == 0
+        kluerror(K.common)
+    else
+        return K.common.rgrowth
     end
 end
 
-for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
-    rgrowth = _klu_name("rgrowth", Tv, Ti)
-    rcond = _klu_name("rcond", Tv, Ti)
-    condest = _klu_name("condest", Tv, Ti)
-    @eval begin
-        """
-            rgrowth(K::KLUFactorization)
+"""
+    rcond(K::KLUFactorization)
 
-        Calculate the reciprocal pivot growth.
-        """
-        function rgrowth(K::KLUFactorization{$Tv, $Ti})
-            K._numeric == C_NULL && klu_factor!(K)
-            ok = $rgrowth(K.colptr, K.rowval, K.nzval, K._symbolic, K._numeric, Ref(K.common))
-            if ok == 0
-                kluerror(K.common)
-            else
-                return K.common.rgrowth
-            end
-        end
-
-        """
-            rcond(K::KLUFactorization)
-
-        Cheaply estimate the reciprocal condition number.
-        """
-        function rcond(K::AbstractKLUFactorization{$Tv, $Ti})
-            K._numeric == C_NULL && klu_factor!(K)
-            ok = $rcond(K._symbolic, K._numeric, Ref(K.common))
-            if ok == 0
-                kluerror(K.common)
-            else
-                return K.common.rcond
-            end
-        end
-
-        """
-            condest(K::KLUFactorization)
-
-        Accurately estimate the 1-norm condition number of the factorization.
-        """
-        function condest(K::KLUFactorization{$Tv, $Ti})
-            K._numeric == C_NULL && klu_factor!(K)
-            ok = $condest(K.colptr, K.nzval, K._symbolic, K._numeric, Ref(K.common))
-            if ok == 0
-                kluerror(K.common)
-            else
-                return K.common.condest
-            end
-        end
+Cheaply estimate the reciprocal condition number.
+"""
+function rcond(K::AbstractKLUFactorization{Tv, Ti}) where {Tv<:KLUTypes, Ti<:KLUITypes}
+    K._numeric == C_NULL && klu_factor!(K)
+    ok = __rcond(Tv, Ti, K._symbolic, K._numeric, Ref(K.common))
+    if ok == 0
+        kluerror(K.common)
+    else
+        return K.common.rcond
     end
 end
 
+"""
+    condest(K::KLUFactorization)
+
+Accurately estimate the 1-norm condition number of the factorization.
+"""
+function condest(K::KLUFactorization{Tv, Ti}) where {Tv<:KLUTypes, Ti<:KLUITypes}
+    K._numeric == C_NULL && klu_factor!(K)
+    ok = __condest(Tv, Ti, K.colptr, K.nzval, K._symbolic, K._numeric, Ref(K.common))
+    if ok == 0
+        kluerror(K.common)
+    else
+        return K.common.condest
+    end
+end
 
 """
     klu_factor!(K::KLUFactorization; check=true, allowsingular=false) -> K::KLUFactorization
@@ -599,23 +576,16 @@ See also: [`klu`](@ref)
 
 [^ACM907]: Davis, Timothy A., & Palamadai Natarajan, E. (2010). Algorithm 907: KLU, A Direct Sparse Solver for Circuit Simulation Problems. ACM Trans. Math. Softw., 37(3). doi:10.1145/1824801.1824814
 """
-klu!
-
-for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
-    refactor = _klu_name("refactor", Tv, Ti)
-    @eval begin
-        function klu!(K::KLUFactorization{$Tv, $Ti}, nzval::Vector{$Tv}; check=true, allowsingular=false)
-            length(nzval) != length(K.nzval)  && throw(DimensionMismatch())
-            K.nzval = nzval
-            K.common.halt_if_singular = !allowsingular && check
-            ok = $refactor(K.colptr, K.rowval, K.nzval, K._symbolic, K._numeric, Ref(K.common))
-            K.common.halt_if_singular = true
-            if (ok == 1 || !check || (allowsingular && K.common.status >= KLU_OK))
-                return K
-            else
-                kluerror(K.common)
-            end
-        end
+function klu!(K::KLUFactorization{Tv, Ti}, nzval::Vector{Tv}; check=true, allowsingular=false) where {Tv<:KLUTypes, Ti<:KLUITypes}
+    length(nzval) != length(K.nzval)  && throw(DimensionMismatch())
+    K.nzval = nzval
+    K.common.halt_if_singular = !allowsingular && check
+    ok = __refactor(Tv, Ti, K.colptr, K.rowval, K.nzval, K._symbolic, K._numeric, Ref(K.common))
+    K.common.halt_if_singular = true
+    if (ok == 1 || !check || (allowsingular && K.common.status >= KLU_OK))
+        return K
+    else
+        kluerror(K.common)
     end
 end
 
@@ -663,19 +633,13 @@ This function overwrites `B` with the solution `X`, for a new solution vector `X
 
     This status should be checked by the user before solve calls if singularity checks were disabled on factorization using `check=false` or `allowsingular=true`.
 """
-solve!
-for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
-    solve = _klu_name("solve", Tv, Ti)
-    @eval begin
-        function solve!(klu::AbstractKLUFactorization{$Tv, $Ti}, B::StridedVecOrMat{$Tv}; check=true)
-            stride(B, 1) == 1 || throw(ArgumentError("B must have unit strides"))
-            klu._numeric == C_NULL && klu_factor!(klu)
-            size(B, 1) == size(klu, 1) || throw(DimensionMismatch())
-            isok = $solve(klu._symbolic, klu._numeric, size(B, 1), size(B, 2), B, Ref(klu.common))
-            isok == 0 && check && kluerror(klu.common)
-            return B
-        end
-    end
+function solve!(klu::AbstractKLUFactorization{Tv, Ti}, B::StridedVecOrMat{Tv}; check=true) where {Tv<:KLUTypes, Ti<:KLUITypes}
+    stride(B, 1) == 1 || throw(ArgumentError("B must have unit strides"))
+    klu._numeric == C_NULL && klu_factor!(klu)
+    size(B, 1) == size(klu, 1) || throw(DimensionMismatch())
+    isok = __solve(Tv, Ti, klu._symbolic, klu._numeric, size(B, 1), size(B, 2), B, Ref(klu.common))
+    isok == 0 && check && kluerror(klu.common)
+    return B
 end
 
 for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
