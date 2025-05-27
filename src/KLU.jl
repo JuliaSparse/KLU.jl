@@ -2,9 +2,11 @@ module KLU
 
 using SparseArrays
 using SparseArrays: SparseMatrixCSC
-import SparseArrays: nnz
+import SparseArrays: nnz, nonzeros
 
 export klu, klu!
+export klu_analyze!, klu_factor!, klu_refactor!, solve!
+export nonzeros
 
 const libklu = :libklu
 include("wrappers.jl")
@@ -181,6 +183,15 @@ function size(K::AbstractKLUFactorization, dim::Integer)
 end
 
 nnz(K::AbstractKLUFactorization) = K.lnz + K.unz + K.nzoff
+"""The nonzeros of the factorization `K`.
+!!! warning "`nonzeros(K)` may or may not point to `nonzeros(A)`"
+    After `K = klu(A)`, it may or may not be the case that `nonzeros(K) === nonzeros(A)`.
+    If `A` is of type `SparseMatrixCSC{Float32, Int64}`, then `nonzeros(F)` will be 
+    a `Vector{Float64}`, while `nonzeros(A)` is a `Vector{Float32}`, so they're definitely distinct.
+    On the other hand, if `A` has value type `Float64`, then changing the values in `nonzeros(A)` 
+    will change `nonzeros(F)` as well.
+"""
+nonzeros(K::AbstractKLUFactorization) = K.nzval
 
 if !isdefined(LinearAlgebra, :AdjointFactorization) # VERSION < v"1.10-"
     Base.adjoint(K::AbstractKLUFactorization) = Adjoint(K)
@@ -271,6 +282,7 @@ function getproperty(klu::AbstractKLUFactorization{Tv, Ti}, s::Symbol) where {Tv
         Lp = Vector{Ti}(undef, klu.n + 1)
         Li = Vector{Ti}(undef, lnz)
         Lx = Vector{Float64}(undef, lnz)
+        # could also be replaced with multiple dispatch.
         Lz = Tv == Float64 ? C_NULL : Vector{Float64}(undef, lnz)
         _extract!(klu; Lp, Li, Lx, Lz)
         return Lp, Li, Lx, Lz
@@ -371,6 +383,8 @@ function show(io::IO, mime::MIME{Symbol("text/plain")}, K::AbstractKLUFactorizat
     end
 end
 
+"""Compute and store (as `K._symbolic`) a symbolic factorization of the sparse matrix 
+represented by the fields of `K`."""
 function klu_analyze!(K::KLUFactorization{Tv, Ti}; check=true) where {Tv, Ti<:KLUITypes}
     if K._symbolic != C_NULL return K end
     sym = __analyze(Ti, K.n, K.colptr, K.rowval, Ref(K.common))
@@ -382,7 +396,7 @@ function klu_analyze!(K::KLUFactorization{Tv, Ti}; check=true) where {Tv, Ti<:KL
     return K
 end
 
-# User provided permutation vectors:
+"""Variant of `klu_analyze!` that allows for user-provided permutation permutation vectors `P` and `Q`."""
 function klu_analyze!(K::KLUFactorization{Tv, Ti}, P::Vector{Ti}, Q::Vector{Ti}; check=true) where {Tv, Ti<:KLUITypes}
     if K._symbolic != C_NULL return K end
     sym = __analyze!(K.n, K.colptr, K.rowval, P, Q, Ref(K.common))
@@ -517,6 +531,8 @@ The relation between `K` and `A` is
   - `check::Bool`: If `true` (default) check for errors after the factorization. If `false` errors must be checked by the user with `klu.common.status`.
   - `allowsingular::Bool`: If `true` (default `false`) allow the factorization to proceed even if the matrix is singular. Note that this will allow for
   silent divide by zero errors in subsequent `solve!` or `ldiv!` calls if singularity is not checked by the user with `klu.common.status == KLU.KLU_SINGULAR`
+  - `full_factor::Bool`: if `true` (default), perform both numeric and symbolic factorization. If `false`, only perform symbolic factorization. 
+  Useful for cases where only the sparse structure of `A` is known at time of construction.
 
 !!! note
     `klu(A::SparseMatrixCSC)` uses the KLU[^ACM907] library that is part of
@@ -526,31 +542,56 @@ The relation between `K` and `A` is
 
 [^ACM907]: Davis, Timothy A., & Palamadai Natarajan, E. (2010). Algorithm 907: KLU, A Direct Sparse Solver for Circuit Simulation Problems. ACM Trans. Math. Softw., 37(3). doi:10.1145/1824801.1824814
 """
-function klu(n, colptr::Vector{Ti}, rowval::Vector{Ti}, nzval::Vector{Tv}; check=true, allowsingular=false) where {Ti<:KLUITypes, Tv<:AbstractFloat}
+function klu(n,
+    colptr::Vector{Ti},
+    rowval::Vector{Ti},
+    nzval::Vector{Tv};
+    check=true,
+    allowsingular=false,
+    full_factor=true,
+) where {Ti<:KLUITypes, Tv<:AbstractFloat}
     if Tv != Float64
         nzval = convert(Vector{Float64}, nzval)
     end
     K = KLUFactorization(n, colptr, rowval, nzval)
-    return klu_factor!(K; check, allowsingular)
+    return full_factor ? klu_factor!(K; check, allowsingular) : klu_analyze!(K; check)
 end
 
-function klu(n, colptr::Vector{Ti}, rowval::Vector{Ti}, nzval::Vector{Tv}; check=true, allowsingular=false) where {Ti<:KLUITypes, Tv<:Complex}
+function klu(n,
+    colptr::Vector{Ti},
+    rowval::Vector{Ti},
+    nzval::Vector{Tv};
+    check=true,
+    allowsingular=false,
+    full_factor=true,
+) where {Ti<:KLUITypes, Tv<:Complex}
     if Tv != ComplexF64
         nzval = convert(Vector{ComplexF64}, nzval)
     end
     K = KLUFactorization(n, colptr, rowval, nzval)
-    return klu_factor!(K; check, allowsingular)
+    return full_factor ? klu_factor!(K; check, allowsingular) : klu_analyze!(K; check)
 end
 
-function klu(A::SparseMatrixCSC{Tv, Ti}; check=true, allowsingular=false) where {Tv<:Union{AbstractFloat, Complex}, Ti<:KLUITypes}
+function klu(A::SparseMatrixCSC{Tv, Ti};
+    check=true,
+    allowsingular=false,
+    full_factor=true,
+) where {Tv<:Union{AbstractFloat, Complex}, Ti<:KLUITypes}
     n = size(A, 1)
     n == size(A, 2) || throw(DimensionMismatch())
-    return klu(n, decrement(A.colptr), decrement(A.rowval), A.nzval; check, allowsingular)
+    return klu(n,
+        decrement(A.colptr),
+        decrement(A.rowval),
+        A.nzval;
+        check,
+        allowsingular,
+        full_factor
+    )
 end
 
 """
     klu!(K::KLUFactorization, A::SparseMatrixCSC; check=true, allowsingular=false) -> K::KLUFactorization
-    klu(K::KLUFactorization, nzval::Vector{Tv}; check=true, allowsingular=false) -> K::KLUFactorization
+    klu!(K::KLUFactorization, nzval::Vector{Tv}; check=true, allowsingular=false) -> K::KLUFactorization
 
 Recompute the KLU factorization `K` using the values of `A` or `nzval`. The pattern of the original
 matrix used to create `K` must match the pattern of `A`. 
@@ -576,7 +617,11 @@ See also: [`klu`](@ref)
 
 [^ACM907]: Davis, Timothy A., & Palamadai Natarajan, E. (2010). Algorithm 907: KLU, A Direct Sparse Solver for Circuit Simulation Problems. ACM Trans. Math. Softw., 37(3). doi:10.1145/1824801.1824814
 """
-function klu!(K::KLUFactorization{Tv, Ti}, nzval::Vector{Tv}; check=true, allowsingular=false) where {Tv<:KLUTypes, Ti<:KLUITypes}
+function klu!(K::KLUFactorization{Tv, Ti},
+    nzval::Vector{Tv};
+    check=true,
+    allowsingular=false,
+) where {Tv<:KLUTypes, Ti<:KLUITypes}
     length(nzval) != length(K.nzval)  && throw(DimensionMismatch())
     K.nzval = nzval
     K.common.halt_if_singular = !allowsingular && check
@@ -610,6 +655,12 @@ function klu!(K::KLUFactorization{U}, S::SparseMatrixCSC{U}; check=true, allowsi
     decrement!(K.rowval)
     return klu!(K, S.nzval; check, allowsingular)
 end
+
+"""
+    klu_refactor!(...) -> K::KLUFactorization
+
+Same as [`klu!`](@ref): alias for naming consistency reasons."""
+klu_refactor!(args...) = klu!(args...)
 
 #B is the modified argument here. To match with the math it should be (klu, B). But convention is
 # modified first. Thoughts?
