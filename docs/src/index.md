@@ -46,4 +46,8 @@ Please cite both [SuiteSparse](https://github.com/DrTimothyAldenDavis/SuiteSpars
 
 ```@docs
 klu
+klu!
+klu_refactor!
+nonzeros
+solve!
 ```

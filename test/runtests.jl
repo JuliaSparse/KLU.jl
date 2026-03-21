@@ -2,7 +2,7 @@ using KLU
 using KLU: increment!, KLUITypes, decrement, klu!, KLUFactorization,
 klu_analyze!, klu_factor!
 using Test
-using SparseArrays: SparseMatrixCSC, sparse, nnz
+using SparseArrays: SparseMatrixCSC, sparse, nnz, nonzeros
 using LinearAlgebra
 
 @testset "KLU Wrappers" begin
@@ -121,5 +121,19 @@ end
         @test_throws SingularException klu(A)
         @test !issuccess(klu(A; check = false))
         @test issuccess(klu(A; allowsingular=true); allowsingular=true)
+    end
+end
+
+@testset "full_factor = false" begin
+    for T in (Float64, ComplexF64, Float32, ComplexF32)
+        A = sparse(Matrix{T}([1 0; 1 1]))
+        nonzeros(A) .= zero(T)
+        F = klu(A; full_factor = false)
+        # we do need both here--for non 64 bit types, the nzval of F is not the same as A's.
+        nonzeros(A) .= one(T)
+        nonzeros(F) .= one(T)
+        klu_factor!(F)
+        b = ones(T, 2)
+        @test F\b ≈ A\b
     end
 end
