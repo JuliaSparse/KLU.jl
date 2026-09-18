@@ -123,6 +123,19 @@ The factors can be obtained from `K::KLUFactorization` via `K.L`, `K.U` and `K.F
 See the [`klu`](@ref) docs for more information.
 
 You typically should not construct this directly, instead use [`klu`](@ref).
+
+# Thread safety
+
+Every operation on a `KLUFactorization` that calls into libklu (`solve!`, `ldiv!`, `\\`,
+`klu!`, `klu_factor!`, `klu_analyze!`, `rcond`, `condest`, `rgrowth`, and access to the
+factors `K.L`, `K.U`, `K.F`, ...) is serialized by a per-object `ReentrantLock`,
+which can be acquired with `lock(K)`/`unlock(K)` or `Base.@lock K ...`.
+
+This is required because the KLU C library stores scratch workspace *inside* the numeric
+factorization object (`Numeric->Xwork`), which `klu_solve`, `klu_tsolve`, `klu_refactor`,
+and `klu_condest` all use. Two concurrent calls on the same factorization would therefore
+corrupt each other's results. Distinct `KLUFactorization` objects share no state and can be
+used from different threads simultaneously without contention.
 """
 mutable struct KLUFactorization{Tv<:KLUTypes, Ti<:KLUITypes} <: AbstractKLUFactorization{Tv, Ti}
     common::Union{klu_l_common, klu_common}
@@ -132,10 +145,16 @@ mutable struct KLUFactorization{Tv<:KLUTypes, Ti<:KLUITypes} <: AbstractKLUFacto
     colptr::Vector{Ti}
     rowval::Vector{Ti}
     nzval::Vector{Tv}
+    # Serializes all libklu calls on this object. KLU keeps per-call scratch space inside
+    # the Numeric object, so concurrent solves/refactors on one factorization are a data race.
+    lock::ReentrantLock
     function KLUFactorization(n, colptr, rowval, nzval)
         Ti = eltype(colptr)
         common = _common(Ti)
-        obj = new{eltype(nzval), Ti}(common, C_NULL, C_NULL, n, colptr, rowval, nzval)
+        obj = new{eltype(nzval), Ti}(common, C_NULL, C_NULL, n, colptr, rowval, nzval, ReentrantLock())
+        # The finalizer deliberately does not take `obj.lock`: an object being finalized is
+        # unreachable, so no other task can be holding its lock or be inside a libklu call
+        # on it. (Any in-flight call keeps the object rooted.)
         function f(klu)
             _free_symbolic(klu)
             _free_numeric(klu)
@@ -144,6 +163,22 @@ mutable struct KLUFactorization{Tv<:KLUTypes, Ti<:KLUITypes} <: AbstractKLUFacto
     end
 end
 
+"""
+    lock(K::KLUFactorization)
+    unlock(K::KLUFactorization)
+    trylock(K::KLUFactorization)
+    islocked(K::KLUFactorization)
+
+Acquire/release the per-object lock that serializes libklu calls on `K`.
+All exported operations take this lock themselves; it is reentrant, so users may also hold
+it across a sequence of operations (e.g. a refactorization followed by several solves) to
+make that sequence atomic with respect to other tasks.
+"""
+Base.lock(K::AbstractKLUFactorization) = lock(getfield(K, :lock))
+Base.unlock(K::AbstractKLUFactorization) = unlock(getfield(K, :lock))
+Base.trylock(K::AbstractKLUFactorization) = trylock(getfield(K, :lock))
+Base.islocked(K::AbstractKLUFactorization) = islocked(getfield(K, :lock))
+
 function _free_symbolic(K::AbstractKLUFactorization{Tv, Ti}) where {Ti<:KLUITypes, Tv}
     K._symbolic == C_NULL && return C_NULL
     if Ti == Int64
@@ -151,7 +186,7 @@ function _free_symbolic(K::AbstractKLUFactorization{Tv, Ti}) where {Ti<:KLUIType
     elseif Ti == Int32
         klu_free_symbolic(Ref(Ptr{klu_symbolic}(K._symbolic)), Ref(K.common))
     end
-    K._symbolic = C_NULL
+    setfield!(K, :_symbolic, C_NULL)
 end
 
 for Ti ∈ KLUIndexTypes, Tv ∈ KLUValueTypes
@@ -161,7 +196,7 @@ for Ti ∈ KLUIndexTypes, Tv ∈ KLUValueTypes
         function _free_numeric(K::AbstractKLUFactorization{$Tv, $Ti})
             K._numeric == C_NULL && return C_NULL
             $klufree(Ref(Ptr{$ptr}(K._numeric)), Ref(K.common))
-            K._numeric = C_NULL
+            setfield!(K, :_numeric, C_NULL)
         end
     end
 end
@@ -202,14 +237,15 @@ if !isdefined(LinearAlgebra, :AdjointFactorization) # VERSION < v"1.10-"
 end
 Base.transpose(K::AbstractKLUFactorization) = TransposeFact(K)
 
-function setproperty!(klu::AbstractKLUFactorization, ::Val{:(_symbolic)}, x)
-    _free_symbolic(klu)
-    setfield!(klu, :(_symbolic), x)
-end
-
-function setproperty!(klu::AbstractKLUFactorization, ::Val{:(_numeric)}, x)
-    _free_numeric(klu)
-    setfield!(klu, :(_numeric), x)
+# Assigning a new symbolic/numeric pointer releases the one it replaces, so that
+# re-running `klu_factor!` on an already factored object does not leak the old factor.
+function setproperty!(klu::AbstractKLUFactorization, s::Symbol, x)
+    if s === :_symbolic
+        _free_symbolic(klu)
+    elseif s === :_numeric
+        _free_numeric(klu)
+    end
+    return setfield!(klu, s, convert(fieldtype(typeof(klu), s), x))
 end
 
 # Certain sets of inputs must be non-null *together*:
@@ -229,12 +265,14 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
             P = C_NULL, Q = C_NULL, R = C_NULL, Lx = C_NULL, Lz = C_NULL, Ux = C_NULL, Uz = C_NULL,
             Fx = C_NULL, Fz = C_NULL, Rs = C_NULL
         )
-            $sort(klu._symbolic, klu._numeric, Ref(klu.common))
-            ok = $call
-            if ok == 1
-                return nothing
-            else
-                kluerror(klu.common)
+            Base.@lock klu begin
+                $sort(klu._symbolic, klu._numeric, Ref(klu.common))
+                ok = $call
+                if ok == 1
+                    return nothing
+                else
+                    kluerror(klu.common)
+                end
             end
         end
     end
@@ -242,7 +280,7 @@ end
 
 function Base.propertynames(::AbstractKLUFactorization, private::Bool=false)
     publicnames = (:lnz, :unz, :nzoff, :L, :U, :F, :q, :p, :Rs, :symbolic, :numeric,)
-    privatenames = (:nblocks, :maxblock,  :(_L), :(_U), :(_F))
+    privatenames = (:nblocks, :maxblock, :lock, :(_L), :(_U), :(_F))
     if private
         return (publicnames..., privatenames...)
     else
@@ -261,19 +299,23 @@ function getproperty(klu::AbstractKLUFactorization{Tv, Ti}, s::Symbol) where {Tv
         return getproperty(klu.symbolic, s)
     end
     if s === :symbolic
-        klu._symbolic == C_NULL && throw(ArgumentError("This KLUFactorization has not yet been analyzed. Try `klu_analyze!`."))
-        if Ti == Int64
-            return unsafe_load(Ptr{klu_l_symbolic}(klu._symbolic))
-        else
-            return unsafe_load(Ptr{klu_symbolic}(klu._symbolic))
+        Base.@lock klu begin
+            klu._symbolic == C_NULL && throw(ArgumentError("This KLUFactorization has not yet been analyzed. Try `klu_analyze!`."))
+            if Ti == Int64
+                return unsafe_load(Ptr{klu_l_symbolic}(klu._symbolic))
+            else
+                return unsafe_load(Ptr{klu_symbolic}(klu._symbolic))
+            end
         end
     end
     if s === :numeric
-        klu._numeric == C_NULL && throw(ArgumentError("This KLUFactorization has not yet been factored. Try `klu_factor!`."))
-        if Ti == Int64
-            return unsafe_load(Ptr{klu_l_numeric}(klu._numeric))
-        else
-            return unsafe_load(Ptr{klu_numeric}(klu._numeric))
+        Base.@lock klu begin
+            klu._numeric == C_NULL && throw(ArgumentError("This KLUFactorization has not yet been factored. Try `klu_factor!`."))
+            if Ti == Int64
+                return unsafe_load(Ptr{klu_l_numeric}(klu._numeric))
+            else
+                return unsafe_load(Ptr{klu_numeric}(klu._numeric))
+            end
         end
     end
     # Non-overloaded parts:
@@ -393,16 +435,18 @@ end
 Compute and store (as `K._symbolic`) a symbolic factorization of the sparse matrix \
 represented by the fields of `K`."""
 function klu_analyze!(K::KLUFactorization{Tv, Ti}; check=true) where {Tv, Ti<:KLUITypes}
-    if K._symbolic != C_NULL return K end
-    if Ti == Int64
-        sym = klu_l_analyze(K.n, K.colptr, K.rowval, Ref(K.common))
-    else
-        sym = klu_analyze(K.n, K.colptr, K.rowval, Ref(K.common))
-    end
-    if sym == C_NULL && check
-        kluerror(K.common)
-    else
-        K._symbolic = sym
+    Base.@lock K begin
+        if K._symbolic != C_NULL return K end
+        if Ti == Int64
+            sym = klu_l_analyze(K.n, K.colptr, K.rowval, Ref(K.common))
+        else
+            sym = klu_analyze(K.n, K.colptr, K.rowval, Ref(K.common))
+        end
+        if sym == C_NULL && check
+            kluerror(K.common)
+        else
+            K._symbolic = sym
+        end
     end
     return K
 end
@@ -412,16 +456,18 @@ end
 
 Variant of `klu_analyze!` that allows for user-provided permutation permutation vectors `P` and `Q`."""
 function klu_analyze!(K::KLUFactorization{Tv, Ti}, P::Vector{Ti}, Q::Vector{Ti}; check=true) where {Tv, Ti<:KLUITypes}
-    if K._symbolic != C_NULL return K end
-    if Ti == Int64
-        sym = klu_l_analyze_given(K.n, K.colptr, K.rowval, P, Q, Ref(K.common))
-    else
-        sym = klu_analyze_given(K.n, K.colptr, K.rowval, P, Q, Ref(K.common))
-    end
-    if sym == C_NULL && check
-        kluerror(K.common)
-    else
-        K._symbolic = sym
+    Base.@lock K begin
+        if K._symbolic != C_NULL return K end
+        if Ti == Int64
+            sym = klu_l_analyze_given(K.n, K.colptr, K.rowval, P, Q, Ref(K.common))
+        else
+            sym = klu_analyze_given(K.n, K.colptr, K.rowval, P, Q, Ref(K.common))
+        end
+        if sym == C_NULL && check
+            kluerror(K.common)
+        else
+            K._symbolic = sym
+        end
     end
     return K
 end
@@ -430,24 +476,26 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
     factor = _klu_name("factor", Tv, Ti)
     @eval begin
         function klu_factor!(K::KLUFactorization{$Tv, $Ti}; check=true, allowsingular=false)
-            K._symbolic == C_NULL && K.common.status >= KLU_OK && klu_analyze!(K)
-            if K._symbolic != C_NULL && K.common.status >= KLU_OK
-                K.common.halt_if_singular = !allowsingular && check
-                num = $factor(K.colptr, K.rowval, K.nzval, K._symbolic, Ref(K.common))
-                K.common.halt_if_singular = true
-            else
-                num = C_NULL
-            end
-            if num == C_NULL && check
-                kluerror(K.common)
-            else
-                if allowsingular
-                    K.common.status < KLU_OK && check && kluerror(K.common)
+            Base.@lock K begin
+                K._symbolic == C_NULL && K.common.status >= KLU_OK && klu_analyze!(K)
+                if K._symbolic != C_NULL && K.common.status >= KLU_OK
+                    K.common.halt_if_singular = !allowsingular && check
+                    num = $factor(K.colptr, K.rowval, K.nzval, K._symbolic, Ref(K.common))
+                    K.common.halt_if_singular = true
                 else
-                    (K.common.status == KLU_OK) || (check && kluerror(K.common))
+                    num = C_NULL
                 end
+                if num == C_NULL && check
+                    kluerror(K.common)
+                else
+                    if allowsingular
+                        K.common.status < KLU_OK && check && kluerror(K.common)
+                    else
+                        (K.common.status == KLU_OK) || (check && kluerror(K.common))
+                    end
+                end
+                K._numeric = num
             end
-            K._numeric = num
             return K
         end
     end
@@ -464,12 +512,14 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
         Calculate the reciprocal pivot growth.
         """
         function rgrowth(K::KLUFactorization{$Tv, $Ti})
-            K._numeric == C_NULL && klu_factor!(K)
-            ok = $rgrowth(K.colptr, K.rowval, K.nzval, K._symbolic, K._numeric, Ref(K.common))
-            if ok == 0
-                kluerror(K.common)
-            else
-                return K.common.rgrowth
+            Base.@lock K begin
+                K._numeric == C_NULL && klu_factor!(K)
+                ok = $rgrowth(K.colptr, K.rowval, K.nzval, K._symbolic, K._numeric, Ref(K.common))
+                if ok == 0
+                    kluerror(K.common)
+                else
+                    return K.common.rgrowth
+                end
             end
         end
 
@@ -479,12 +529,14 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
         Cheaply estimate the reciprocal condition number.
         """
         function rcond(K::AbstractKLUFactorization{$Tv, $Ti})
-            K._numeric == C_NULL && klu_factor!(K)
-            ok = $rcond(K._symbolic, K._numeric, Ref(K.common))
-            if ok == 0
-                kluerror(K.common)
-            else
-                return K.common.rcond
+            Base.@lock K begin
+                K._numeric == C_NULL && klu_factor!(K)
+                ok = $rcond(K._symbolic, K._numeric, Ref(K.common))
+                if ok == 0
+                    kluerror(K.common)
+                else
+                    return K.common.rcond
+                end
             end
         end
 
@@ -494,12 +546,14 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
         Accurately estimate the 1-norm condition number of the factorization.
         """
         function condest(K::KLUFactorization{$Tv, $Ti})
-            K._numeric == C_NULL && klu_factor!(K)
-            ok = $condest(K.colptr, K.nzval, K._symbolic, K._numeric, Ref(K.common))
-            if ok == 0
-                kluerror(K.common)
-            else
-                return K.common.condest
+            Base.@lock K begin
+                K._numeric == C_NULL && klu_factor!(K)
+                ok = $condest(K.colptr, K.nzval, K._symbolic, K._numeric, Ref(K.common))
+                if ok == 0
+                    kluerror(K.common)
+                else
+                    return K.common.condest
+                end
             end
         end
     end
@@ -568,6 +622,13 @@ The relation between `K` and `A` is
     SuiteSparse. As this library only supports sparse matrices with [`Float64`](@ref) or
     `ComplexF64` elements, `lu` converts `A` into a copy that is of type
     `SparseMatrixCSC{Float64}` or `SparseMatrixCSC{ComplexF64}` as appropriate.
+
+!!! note "Thread safety"
+    A single `KLUFactorization` may be shared between tasks/threads: every libklu call on
+    it is serialized by a per-object lock (see [`KLUFactorization`](@ref)). Solves on
+    *distinct* factorizations run fully in parallel. To solve many right-hand sides
+    concurrently against the same matrix, either batch them into the columns of one `B`
+    (a single `solve!` call) or give each task its own factorization.
 
 [^ACM907]: Davis, Timothy A., & Palamadai Natarajan, E. (2010). Algorithm 907: KLU, A Direct Sparse Solver for Circuit Simulation Problems. ACM Trans. Math. Softw., 37(3). doi:10.1145/1824801.1824814
 """
@@ -653,14 +714,16 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
     @eval begin
         function klu!(K::KLUFactorization{$Tv, $Ti}, nzval::Vector{$Tv}; check=true, allowsingular=false)
             length(nzval) != length(K.nzval)  && throw(DimensionMismatch())
-            K.nzval = nzval
-            K.common.halt_if_singular = !allowsingular && check
-            ok = $refactor(K.colptr, K.rowval, K.nzval, K._symbolic, K._numeric, Ref(K.common))
-            K.common.halt_if_singular = true
-            if (ok == 1 || !check || (allowsingular && K.common.status >= KLU_OK))
-                return K
-            else
-                kluerror(K.common)
+            Base.@lock K begin
+                K.nzval = nzval
+                K.common.halt_if_singular = !allowsingular && check
+                ok = $refactor(K.colptr, K.rowval, K.nzval, K._symbolic, K._numeric, Ref(K.common))
+                K.common.halt_if_singular = true
+                if (ok == 1 || !check || (allowsingular && K.common.status >= KLU_OK))
+                    return K
+                else
+                    kluerror(K.common)
+                end
             end
         end
     end
@@ -676,16 +739,20 @@ end
 
 function klu!(K::KLUFactorization{U}, S::SparseMatrixCSC{U}; check=true, allowsingular=false) where {U}
     size(K) == size(S) || throw(ArgumentError("Sizes of K and S must match."))
-    increment!(K.colptr)
-    increment!(K.rowval)
-    # what should happen here when check = false? This is not really a KLU error code.
-    K.colptr == S.colptr && K.rowval == S.rowval ||
-        (decrement!(K.colptr); decrement!(K.rowval);
-        throw(ArgumentError("The pattern of the original matrix must match the pattern of the refactor."))
-        )
-    decrement!(K.colptr)
-    decrement!(K.rowval)
-    return klu!(K, S.nzval; check, allowsingular)
+    # The pattern check below temporarily shifts K.colptr/K.rowval to 1-based indices,
+    # so it must not interleave with any libklu call on K.
+    Base.@lock K begin
+        increment!(K.colptr)
+        increment!(K.rowval)
+        # what should happen here when check = false? This is not really a KLU error code.
+        K.colptr == S.colptr && K.rowval == S.rowval ||
+            (decrement!(K.colptr); decrement!(K.rowval);
+            throw(ArgumentError("The pattern of the original matrix must match the pattern of the refactor."))
+            )
+        decrement!(K.colptr)
+        decrement!(K.rowval)
+        return klu!(K, S.nzval; check, allowsingular)
+    end
 end
 
 """
@@ -715,6 +782,13 @@ This function overwrites `B` with the solution `X`, for a new solution vector `X
     If the factorization object `klu` has `klu.common.status == KLU.KLU_SINGULAR` then the `solve!` or `ldiv!` will result in a silent divide by zero error.
 
     This status should be checked by the user before solve calls if singularity checks were disabled on factorization using `check=false` or `allowsingular=true`.
+
+!!! note "Thread safety"
+    `solve!` holds the per-object lock of `klu` for the duration of the call (libklu uses
+    workspace stored inside the factorization), so concurrent solves against one
+    `KLUFactorization` are correct but serialized. Solves against different factorization
+    objects proceed in parallel. Batch multiple right-hand sides into the columns of `B`
+    to solve them in a single call.
 """
 solve!
 for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
@@ -722,10 +796,12 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
     @eval begin
         function solve!(klu::AbstractKLUFactorization{$Tv, $Ti}, B::StridedVecOrMat{$Tv}; check=true)
             stride(B, 1) == 1 || throw(ArgumentError("B must have unit strides"))
-            klu._numeric == C_NULL && klu_factor!(klu)
             size(B, 1) == size(klu, 1) || throw(DimensionMismatch())
-            isok = $solve_name(klu._symbolic, klu._numeric, size(B, 1), size(B, 2), B, Ref(klu.common))
-            isok == 0 && check && kluerror(klu.common)
+            Base.@lock klu begin
+                klu._numeric == C_NULL && klu_factor!(klu)
+                isok = $solve_name(klu._symbolic, klu._numeric, size(B, 1), size(B, 2), B, Ref(klu.common))
+                isok == 0 && check && kluerror(klu.common)
+            end
             return B
         end
     end
@@ -743,20 +819,24 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
             conj = 1
             klu = parent(klu)
             stride(B, 1) == 1 || throw(ArgumentError("B must have unit strides"))
-            klu._numeric == C_NULL && klu_factor!(klu)
             size(B, 1) == size(klu, 1) || throw(DimensionMismatch())
-            isok = $call
-            isok == 0 && check && kluerror(klu.common)
+            Base.@lock klu begin
+                klu._numeric == C_NULL && klu_factor!(klu)
+                isok = $call
+                isok == 0 && check && kluerror(klu.common)
+            end
             return B
         end
         function solve!(klu::TransposeFact{$Tv, K}, B::StridedVecOrMat{$Tv}; check=true) where {K<: AbstractKLUFactorization{$Tv, $Ti}}
             conj = 0
             klu = parent(klu)
             stride(B, 1) == 1 || throw(ArgumentError("B must have unit strides"))
-            klu._numeric == C_NULL && klu_factor!(klu)
             size(B, 1) == size(klu, 1) || throw(DimensionMismatch())
-            isok = $call
-            isok == 0 && check && kluerror(klu.common)
+            Base.@lock klu begin
+                klu._numeric == C_NULL && klu_factor!(klu)
+                isok = $call
+                isok == 0 && check && kluerror(klu.common)
+            end
             return B
         end
     end
