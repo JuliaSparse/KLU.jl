@@ -38,6 +38,18 @@ julia> x = factor \ b
   10.688731342850245
 ```
 
+## Thread safety
+
+KLU's C library keeps scratch workspace *inside* each numeric factorization, so two
+simultaneous solves (or a solve and a refactorization) on the **same** `KLUFactorization`
+would corrupt each other. KLU.jl therefore guards every libklu call with a lock stored
+in the factorization object: sharing one factorization between threads is safe, but those
+calls are serialized. Distinct factorizations share no state and run fully in parallel.
+To solve many right-hand sides against one matrix in parallel, batch them as the columns
+of a single `B` in one `solve!`/`ldiv!` call, or give each task its own `klu(A)`.
+The lock is reentrant and can be held by the user across a sequence of calls with
+`Base.@lock F ...`.
+
 ## Citing this package
 
 Please cite both [SuiteSparse](https://github.com/DrTimothyAldenDavis/SuiteSparse/blob/dev/CITATION.bib) as well as [KLU](https://github.com/JuliaSparse/KLU.jl/blob/main/CITATION.bib):
@@ -50,4 +62,5 @@ klu!
 klu_refactor!
 nonzeros
 solve!
+KLU.KLUFactorization
 ```

@@ -2,7 +2,7 @@ using KLU
 using KLU: increment!, KLUITypes, decrement, klu!, KLUFactorization,
 klu_analyze!, klu_factor!
 using Test
-using SparseArrays: SparseMatrixCSC, sparse, nnz, nonzeros
+using SparseArrays: SparseMatrixCSC, sparse, sprand, nnz, nonzeros
 using LinearAlgebra
 
 @testset "KLU Wrappers" begin
@@ -136,4 +136,78 @@ end
         b = ones(T, 2)
         @test F\b ≈ A\b
     end
+end
+# Regression test for JuliaSparse/KLU.jl#38: libklu keeps scratch workspace inside the
+# Numeric object, so unsynchronized concurrent solves on one factorization return garbage.
+@testset "Concurrent use of a shared factorization (issue #38)" begin
+    n = 400
+    A = sparse(1:n, 1:n, 4.0 .+ rand(n)) + sprand(n, n, 4 / n)
+    for Tv in (Float64, ComplexF64), Ti in Base.uniontypes(KLUITypes)
+        As = convert(SparseMatrixCSC{Tv, Ti}, A)
+        F = klu(As)
+        ntasks = 4 * max(Threads.nthreads(), 2)
+        residuals = zeros(ntasks)
+        @sync for t in 1:ntasks
+            Threads.@spawn begin
+                b = rand(Tv, n)
+                worst = 0.0
+                for i in 1:100
+                    # mix plain, adjoint, and transposed solves plus multi-rhs
+                    x = F \ b
+                    worst = max(worst, norm(As * x - b) / norm(b))
+                    x = F' \ b
+                    worst = max(worst, norm(As' * x - b) / norm(b))
+                    x = transpose(F) \ b
+                    worst = max(worst, norm(transpose(As) * x - b) / norm(b))
+                    X = solve!(F, repeat(b, 1, 3))
+                    worst = max(worst, norm(As * X .- b) / norm(b))
+                end
+                residuals[t] = worst
+            end
+        end
+        @test all(residuals .< 1e-10)
+
+        # Concurrent refactorization (same values) interleaved with solves must stay consistent.
+        @sync begin
+            Threads.@spawn for _ in 1:50
+                klu!(F, As)
+            end
+            Threads.@spawn begin
+                b = rand(Tv, n)
+                for _ in 1:200
+                    x = F \ b
+                    @test norm(As * x - b) / norm(b) < 1e-10
+                end
+            end
+        end
+        # a caller may hold the lock across several operations
+        @test !islocked(F)
+        Base.@lock F begin
+            @test islocked(F)
+            b = rand(Tv, n)
+            klu!(F, As)
+            @test norm(As * (F \ b) - b) / norm(b) < 1e-10
+        end
+        @test !islocked(F)
+    end
+    # Independent factorizations on different threads share nothing.
+    @sync for _ in 1:8
+        Threads.@spawn begin
+            F = klu(A)
+            b = rand(n)
+            for _ in 1:20
+                @test norm(A * (F \ b) - b) / norm(b) < 1e-10
+            end
+        end
+    end
+end
+
+@testset "klu_factor! on an already factored object releases the old factor" begin
+    A = sparse([1, 2], [1, 2], [1.0, 2.0])
+    F = klu(A)
+    p1 = F._numeric
+    @test p1 != C_NULL
+    klu_factor!(F)               # must not leak p1 (setproperty! frees it)
+    @test F._numeric != C_NULL
+    @test F \ [1.0, 2.0] ≈ [1.0, 1.0]
 end
