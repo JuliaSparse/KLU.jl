@@ -818,6 +818,17 @@ function Base.deepcopy_internal(K::KLUFactorization{Tv, Ti}, stackdict::IdDict) 
     end
 end
 
+# libklu's `ldim`: the distance between the starts of columns of `B`, in elements of `B`. libklu
+# only steps forward by it, so it must be at least the column length. Unused for a single column.
+function _ldim(B::StridedVecOrMat)
+    stride(B, 1) == 1 || throw(ArgumentError("B must have unit stride along its first dimension"))
+    n, nrhs = size(B, 1), size(B, 2)
+    nrhs <= 1 && return n
+    ldim = stride(B, 2)
+    ldim >= n || throw(ArgumentError("The columns of B must be disjoint and in increasing memory order, but B has $n rows and a column stride of $ldim."))
+    return ldim
+end
+
 #B is the modified argument here. To match with the math it should be (klu, B). But convention is
 # modified first. Thoughts?
 
@@ -832,7 +843,8 @@ This function overwrites `B` with the solution `X`, for a new solution vector `X
 
 # Arguments
   - `klu::KLUFactorization`: The matrix factorization of `A` to use in the solution.
-  - `B::StridedVecOrMat`: The right-hand side of the linear system.
+  - `B::StridedVecOrMat`: The right-hand side of the linear system. This may be a view such as `@view C[1:n, 2:4]`, \
+  as long as each column is contiguous in memory and multiple columns are in increasing memory order. Other layouts throw an `ArgumentError`.
   - `check::Bool`: If `true` (default) check for errors after the solve. If `false` errors must be checked using `klu.common.status`. The return value of this function is always `B`, so the status of the solve *must* be checked using the factorization object itself when `check=false`.
 
 !!! warning "Solve with a singular factorization object"
@@ -852,11 +864,11 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
     solve_name = _klu_name("solve", Tv, Ti)
     @eval begin
         function solve!(klu::AbstractKLUFactorization{$Tv, $Ti}, B::StridedVecOrMat{$Tv}; check=true)
-            stride(B, 1) == 1 || throw(ArgumentError("B must have unit strides"))
+            ldim = _ldim(B)
             size(B, 1) == size(klu, 1) || throw(DimensionMismatch())
             Base.@lock klu begin
                 klu._numeric == C_NULL && klu_factor!(klu)
-                isok = $solve_name(klu._symbolic, klu._numeric, size(B, 1), size(B, 2), B, Ref(klu.common))
+                isok = $solve_name(klu._symbolic, klu._numeric, ldim, size(B, 2), B, Ref(klu.common))
                 isok == 0 && check && kluerror(klu.common)
             end
             return B
@@ -867,15 +879,15 @@ end
 for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
     tsolve = _klu_name("tsolve", Tv, Ti)
     if Tv === :ComplexF64
-        call = :($tsolve(klu._symbolic, klu._numeric, size(B, 1), size(B, 2), B, conj, Ref(klu.common)))
+        call = :($tsolve(klu._symbolic, klu._numeric, ldim, size(B, 2), B, conj, Ref(klu.common)))
     else
-        call = :($tsolve(klu._symbolic, klu._numeric, size(B, 1), size(B, 2), B, Ref(klu.common)))
+        call = :($tsolve(klu._symbolic, klu._numeric, ldim, size(B, 2), B, Ref(klu.common)))
     end
     @eval begin
         function solve!(klu::AdjointFact{$Tv, K}, B::StridedVecOrMat{$Tv}; check=true) where {K<:AbstractKLUFactorization{$Tv, $Ti}}
             conj = 1
             klu = parent(klu)
-            stride(B, 1) == 1 || throw(ArgumentError("B must have unit strides"))
+            ldim = _ldim(B)
             size(B, 1) == size(klu, 1) || throw(DimensionMismatch())
             Base.@lock klu begin
                 klu._numeric == C_NULL && klu_factor!(klu)
@@ -887,7 +899,7 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
         function solve!(klu::TransposeFact{$Tv, K}, B::StridedVecOrMat{$Tv}; check=true) where {K<: AbstractKLUFactorization{$Tv, $Ti}}
             conj = 0
             klu = parent(klu)
-            stride(B, 1) == 1 || throw(ArgumentError("B must have unit strides"))
+            ldim = _ldim(B)
             size(B, 1) == size(klu, 1) || throw(DimensionMismatch())
             Base.@lock klu begin
                 klu._numeric == C_NULL && klu_factor!(klu)

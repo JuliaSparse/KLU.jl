@@ -141,6 +141,38 @@ using LinearAlgebra
                 @test unsafe_wrap(Array, C.symbolic.Q, 5) == Q
                 @test C \ b ≈ Ab
             end
+
+            @testset "Strided views as right-hand sides (issue #11)" begin
+                F = klu(A)
+                Ad = Matrix(A)
+                for (op, M) in ((identity, Ad), (adjoint, Ad'), (transpose, transpose(Ad))),
+                        (dims, inds) in (((7, 7), (1:5, 1:5)),
+                                         ((7, 7), (2:6, 1:2:7)),   # skipping columns
+                                         ((8, 8), (2:6, 2:7)),     # libklu solves in chunks of 4
+                                         ((7, 7), (2:6, 4:-1:4)),  # a single column is never stepped over
+                                         ((7, 7), (2:6, 3)),
+                                         ((7, 3, 2), (2:6, 2, :)))
+                    P = rand(Tv, dims...)
+                    P0 = copy(P)
+                    V = view(P, inds...)
+                    V0 = copy(V)
+                    @test ldiv!(op(F), V) === V
+                    @test M * V ≈ V0
+                    V .= V0
+                    @test P == P0 # nothing outside of the view was overwritten
+                end
+                P = rand(Tv, 10, 10)
+                P0 = copy(P)
+                for V in (view(P, 1:2:9, 1:3), view(P, 5:-1:1, 1:3), view(P, 1:5, 3:-1:1),
+                          view(P, 1:5, StepRangeLen(2, 0, 3))), op in (identity, adjoint, transpose)
+                    @test_throws ArgumentError ldiv!(op(F), V)
+                end
+                # A layout is rejected before an unfactored K is factored.
+                K = KLUFactorization(A)
+                @test_throws ArgumentError ldiv!(K, view(P, 1:5, 3:-1:1))
+                @test K._numeric == C_NULL
+                @test P == P0
+            end
         end
     end
     @testset "deepcopy keeps aliasing within the copied object" begin
