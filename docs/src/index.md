@@ -62,5 +62,8 @@ klu!
 klu_refactor!
 nonzeros
 solve!
+rcond
+condest
+rgrowth
 KLU.KLUFactorization
 ```

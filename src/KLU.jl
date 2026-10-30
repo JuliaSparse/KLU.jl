@@ -6,6 +6,7 @@ import SparseArrays: nnz, nonzeros
 
 export klu, klu!
 export klu_factor!, klu_refactor!, solve!
+export rcond, condest, rgrowth
 export nonzeros
 
 const libklu = :libklu
