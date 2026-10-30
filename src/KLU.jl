@@ -793,6 +793,7 @@ function Base.deepcopy_internal(K::KLUFactorization{Tv, Ti}, stackdict::IdDict) 
         stackdict[K] = C
         C.common = Base.deepcopy_internal(K.common, stackdict)
         C.common.status = KLU_OK # klu_factor! refuses to proceed after an earlier failure
+        C.common.memusage = C.common.mempeak = 0 # these count the libklu objects of `C` only
         if K._symbolic != C_NULL
             symbolic = K.symbolic
             if symbolic.ordering == 2 # analyzed with user-provided permutations
