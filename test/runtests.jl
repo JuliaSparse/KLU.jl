@@ -58,11 +58,14 @@ using LinearAlgebra
             @inferred klua\fill(1, size(A, 2))
 
             @testset "Permutation vectors" begin
-                #Just to test this works, we'll use the existing permutation vectors.
-                @test klu_analyze!(klua, klua.p, klua.q).common.status == 0
-                klu_factor!(klua)
-                x = klua \ b
-                @test A*x ≈ b
+                P, Q = decrement(klua.p), decrement(klua.q)
+                K = klu_analyze!(KLUFactorization(A), P, Q)
+                @test K.symbolic.ordering == 2
+                @test A * (K \ b) ≈ b
+                # libklu reads out of bounds if these are not zero-based permutations.
+                for (P1, Q1) in ((klua.p, klua.q), (P[1:end-1], Q), (P, fill(Ti(0), 5)))
+                    @test_throws ArgumentError klu_analyze!(KLUFactorization(A), P1, Q1)
+                end
             end
             @testset "Utility functions" begin
                 K = KLUFactorization(A);
@@ -70,7 +73,11 @@ using LinearAlgebra
                 @test size(K, 3) == 1
                 @test_throws ArgumentError K.symbolic
                 @test_throws ArgumentError K.numeric
+                @test_throws ArgumentError K.p
                 klu_analyze!(K);
+                for s in (:p, :q, :R, :Rs, :L, :U, :F) # :p, :q and :Rs crashed in libklu
+                    @test_throws ArgumentError getproperty(K, s)
+                end
                 @test K.symbolic.nz == 12
                 @test K.symbolic.nzoff == 4
                 klu_factor!(K)
@@ -93,6 +100,15 @@ using LinearAlgebra
                 S = sparse([1 2; 0 0])
                 S = convert(SparseMatrixCSC{Tv, Ti}, S)
                 @test_throws SingularException klu(S)
+                # libklu resets the status in each of these, which made `F` look nonsingular.
+                F = klu(S; allowsingular = true)
+                b2 = ones(Tv, 2)
+                for op in (F -> F \ b2, F -> F' \ b2, F -> transpose(F) \ b2, F -> F.L, F -> F.Rs,
+                           F -> sprint(show, MIME("text/plain"), F))
+                    op(F)
+                    @test F.common.status == KLU.KLU_SINGULAR
+                    @test !issuccess(F)
+                end
             end
 
             # The default deepcopy copied the raw libklu pointers (issue #12), so a copy shared
@@ -209,6 +225,11 @@ end
         @test !issuccess(klu(A; check = false))
         @test issuccess(klu(A; allowsingular=true); allowsingular=true)
     end
+    # An invalid pattern, which klu_analyze! rejects.
+    @test_throws ArgumentError klu(2, [0, 5, 1], [0], [1.0])
+    K = klu(2, [0, 5, 1], [0], [1.0]; check = false)
+    @test K.common.status == KLU.KLU_INVALID
+    @test !issuccess(K)
 end
 
 # Regression test for JuliaSparse/KLU.jl#31: at exit Julia runs all finalizers, including those
@@ -245,6 +266,9 @@ end
         nonzeros(F) .= one(T)
         klu_factor!(F)
         b = ones(T, 2)
+        @test F\b ≈ A\b
+        # klu! left this unusable, as libklu has nothing to refactor yet.
+        F = klu!(klu(A; full_factor = false), nonzeros(A))
         @test F\b ≈ A\b
     end
 end
