@@ -1,6 +1,6 @@
 using KLU
 using KLU: increment!, KLUITypes, decrement, klu!, KLUFactorization,
-klu_analyze!, klu_factor!
+klu_analyze!, klu_factor!, klu_refactor!
 using Test
 using SparseArrays: SparseMatrixCSC, sparse, sprand, nnz, nonzeros
 using LinearAlgebra
@@ -57,6 +57,13 @@ using LinearAlgebra
 
             @inferred klua\fill(1, size(A, 2))
 
+            for (op, M) in ((identity, A), (adjoint, A'), (transpose, transpose(A)))
+                X = complex.(rand(5, 2))
+                @test M * ldiv!(op(klua), copy(X)) ≈ X
+                @test_throws DimensionMismatch ldiv!(op(klua), zeros(Tv, 6))
+                @test_throws DimensionMismatch ldiv!(op(klua), zeros(ComplexF64, 6))
+            end
+
             @testset "Permutation vectors" begin
                 P, Q = decrement(klua.p), decrement(klua.q)
                 K = klu_analyze!(KLUFactorization(A), P, Q)
@@ -85,6 +92,11 @@ using LinearAlgebra
                 @test K.nblocks == 3
                 @test propertynames(K) == (:lnz, :unz, :nzoff, :L, :U, :F, :q, :p, :Rs, :symbolic, :numeric,)
                 @test_throws ArgumentError size(K, -1)
+                @test K.R[[1, end]] == [1, 6] && length(K.R) == K.nblocks + 1
+                @test (:nblocks, :lock) ⊆ propertynames(K, true)
+                R = convert(SparseMatrixCSC{Tv, Ti}, sparse(ones(2, 3)))
+                @test_throws DimensionMismatch klu(R)
+                @test_throws ArgumentError KLUFactorization(R)
                 @test size(K, 3) == 1
             end
             @testset "Refactorization" begin
@@ -94,6 +106,24 @@ using LinearAlgebra
                 klu!(F, B)
                 @test F\b ≈ B\b ≈ Matrix(B)\b
                 @test klu!(F, B.nzval)\b ≈ B\b ≈ Matrix(B)\b #test just supplying nzval for recompute
+                @test klu_refactor!(F, A)\b ≈ Matrix(A)\b
+
+                # The pattern check temporarily shifts the indices of F, which must be undone.
+                P = copy(A)
+                P[findfirst(iszero, Matrix(A))] = one(Tv)
+                @test_throws ArgumentError klu!(F, P)
+                @test F\b ≈ Matrix(A)\b
+                @test_throws ArgumentError klu!(F, convert(SparseMatrixCSC{Tv, Ti}, sparse(1.0I, 2, 2)))
+                @test_throws DimensionMismatch klu!(F, Tv[1, 2])
+
+                # A singular refactorization, which can be recovered from.
+                C = convert(SparseMatrixCSC{Tv, Ti}, sparse([1, 2, 1, 2], [1, 1, 2, 2], [1., 1., 1., 2.]))
+                G = klu(C)
+                singular = Tv[1, 1, 1, 1]
+                @test_throws SingularException klu!(G, singular)
+                @test klu!(G, nonzeros(C)) \ ones(Tv, 2) ≈ Matrix(C) \ ones(Tv, 2)
+                @test !issuccess(klu!(G, singular; check = false))
+                @test issuccess(klu!(G, singular; allowsingular = true); allowsingular = true)
             end
 
             @testset "Singular matrix" begin
@@ -207,6 +237,7 @@ using LinearAlgebra
         ustring = sprint((t, s) -> show(t, "text/plain", s), F.U)
         fstring = sprint((t, s) -> show(t, "text/plain", s), F.F)
         @test facstring == "$(summary(F))\nL factor:\n$lstring\nU factor:\n$ustring\nF factor:\n$fstring"
+        @test occursin("Incomplete Factorization", sprint(show, MIME("text/plain"), KLUFactorization(A)))
     end
 end
 
@@ -220,6 +251,11 @@ end
 end
 
 @testset "check=false" begin
+    @test KLU.kluerror(KLU.KLU_OK) === nothing
+    for (status, E) in ((KLU.KLU_OUT_OF_MEMORY, OutOfMemoryError), (KLU.KLU_INVALID, ArgumentError),
+                        (KLU.KLU_TOO_LARGE, OverflowError), (99, ErrorException))
+        @test_throws E KLU.kluerror(status)
+    end
     for A in sparse.((Float64[1 2; 0 0], ComplexF64[1 2; 0 0]))
         @test_throws SingularException klu(A)
         @test !issuccess(klu(A; check = false))
@@ -331,6 +367,8 @@ end
         @test all(residuals .< 1e-10)
 
         # a caller may hold the lock across several operations
+        @test trylock(F) && islocked(F)
+        unlock(F)
         @test !islocked(F)
         Base.@lock F begin
             @test islocked(F)
