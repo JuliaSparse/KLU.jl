@@ -379,5 +379,8 @@ end
         F = klu(sparse(Tv[1 2; 0 0]); allowsingular = true)
         @test rcond(F) == 0
         @test condest(F) == Inf
+        rgrowth(F) # libklu resets the status here
+        @test F.common.status == KLU.KLU_SINGULAR
+        @test !issuccess(F)
     end
 end

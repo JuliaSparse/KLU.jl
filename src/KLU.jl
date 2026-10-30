@@ -514,28 +514,20 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
     rcond = _klu_name("rcond", Tv, Ti)
     condest = _klu_name("condest", Tv, Ti)
     @eval begin
-        """
-            rgrowth(K::KLUFactorization)
-
-        Calculate the reciprocal pivot growth.
-        """
         function rgrowth(K::KLUFactorization{$Tv, $Ti})
             Base.@lock K begin
                 K._numeric == C_NULL && klu_factor!(K)
+                status = K.common.status
                 ok = $rgrowth(K.colptr, K.rowval, K.nzval, K._symbolic, K._numeric, Ref(K.common))
                 if ok == 0
                     kluerror(K.common)
                 else
+                    K.common.status = status # libklu resets it, which would hide KLU_SINGULAR
                     return K.common.rgrowth
                 end
             end
         end
 
-        """
-            rcond(K::KLUFactorization)
-
-        Cheaply estimate the reciprocal condition number.
-        """
         function rcond(K::AbstractKLUFactorization{$Tv, $Ti})
             Base.@lock K begin
                 K._numeric == C_NULL && klu_factor!(K)
@@ -548,11 +540,6 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
             end
         end
 
-        """
-            condest(K::KLUFactorization)
-
-        Accurately estimate the 1-norm condition number of the factorization.
-        """
         function condest(K::KLUFactorization{$Tv, $Ti})
             Base.@lock K begin
                 K._numeric == C_NULL && klu_factor!(K)
@@ -566,6 +553,27 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
         end
     end
 end
+
+"""
+    rgrowth(K::KLUFactorization)
+
+Calculate the reciprocal pivot growth.
+"""
+rgrowth
+
+"""
+    rcond(K::KLUFactorization)
+
+Cheaply estimate the reciprocal condition number.
+"""
+rcond
+
+"""
+    condest(K::KLUFactorization)
+
+Accurately estimate the 1-norm condition number of the factorization.
+"""
+condest
 
 
 """
