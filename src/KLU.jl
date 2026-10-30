@@ -761,6 +761,55 @@ end
 Same as [`klu!`](@ref): alias for naming consistency reasons."""
 klu_refactor!(args...) = klu!(args...)
 
+"""
+    copy(K::KLUFactorization) -> KLUFactorization
+    deepcopy(K::KLUFactorization) -> KLUFactorization
+
+Return a copy of `K` with its own arrays, `common`, lock and libklu objects, which can be
+used, refactored and freed independently of `K`, including concurrently from another task.
+`copy` is deep as well, since `K` must not share any of this state (see
+[`KLUFactorization`](@ref)).
+
+The copy is in the same state as `K`: unanalyzed, analyzed, or factored, with the settings
+and status in `K.common`. libklu cannot duplicate its objects, so an analyzed or factored `K`
+is analyzed and factored again using `K.common` and `nonzeros(K)` as they are at the time of
+the copy. This costs as much as a new factorization, and `K` stays locked meanwhile.
+
+If `nonzeros(K)` was modified after `K` was factored, the copy factors the modified values.
+After [`klu!`](@ref), `K` reuses the pivots of its earlier factorization and the copy chooses
+its own, so their factors need not be equal, but they solve the same system.
+"""
+Base.copy(K::KLUFactorization) = deepcopy(K)
+
+function Base.deepcopy_internal(K::KLUFactorization{Tv, Ti}, stackdict::IdDict) where {Tv, Ti}
+    haskey(stackdict, K) && return stackdict[K]::KLUFactorization{Tv, Ti}
+    Base.@lock K begin
+        # `deepcopy_internal` keeps any aliasing between the arrays of `K` and other copied
+        # objects, e.g. `nonzeros(K) === nonzeros(A)` after `K = klu(A)`.
+        C = KLUFactorization(K.n,
+            Base.deepcopy_internal(K.colptr, stackdict),
+            Base.deepcopy_internal(K.rowval, stackdict),
+            Base.deepcopy_internal(K.nzval, stackdict))
+        stackdict[K] = C
+        C.common = Base.deepcopy_internal(K.common, stackdict)
+        C.common.status = KLU_OK # klu_factor! refuses to proceed after an earlier failure
+        if K._symbolic != C_NULL
+            symbolic = K.symbolic
+            if symbolic.ordering == 2 # analyzed with user-provided permutations
+                klu_analyze!(C, unsafe_wrap(Array, symbolic.P, K.n), unsafe_wrap(Array, symbolic.Q, K.n))
+            else
+                klu_analyze!(C)
+            end
+        end
+        if K._numeric != C_NULL
+            klu_factor!(C; allowsingular = true)
+        end
+        # Keep any status of `K` other than success, and otherwise the outcome of the above.
+        K.common.status == KLU_OK || (C.common.status = K.common.status)
+        return C
+    end
+end
+
 #B is the modified argument here. To match with the math it should be (klu, B). But convention is
 # modified first. Thoughts?
 
