@@ -216,6 +216,96 @@ end
         @test F\b ≈ A\b
     end
 end
+# libklu's `ldim` must be the distance between columns of B, not their length, or a view of
+# part of a larger matrix silently gives wrong answers and overwrites the rest of the parent.
+@testset "Strided views as right-hand sides (issue #11)" begin
+    n = 8
+    S = sparse(1:n, 1:n, 4.0 .+ (1:n)) +
+        sparse([1, 1, 2, 3, 4, 5, 6, 7, 8, 8], [2, 8, 5, 1, 7, 2, 3, 8, 1, 4],
+               [1.0, -2.0, 0.5, 3.0, -1.0, 2.0, 1.5, -0.5, 2.5, 1.0], n, n)
+    # Deterministic parents without any repeated values, so that any mix-up is detected.
+    parent_of(Tv, dims...) = Tv <: Real ? Tv.(reshape(1:prod(dims), dims) .^ 1.5) :
+        Tv.(reshape(1:prod(dims), dims) .^ 1.5, sqrt.(reshape(1:prod(dims), dims)))
+    # Each entry is a parent size and a function which takes a view of a parent with that size.
+    views = Pair{<:Tuple, <:Function}[
+        (10, 10) => P -> @view(P[1:8, 1:8]),      # the example in the issue
+        (10, 10) => P -> @view(P[1:8, 1:3]),
+        (10, 10) => P -> @view(P[2:9, 4:8]),
+        (10, 10) => P -> @view(P[1:8, 1:2:7]),    # skipping columns
+        (10, 10) => P -> @view(P[1:8, 5:5]),      # one column
+        (10, 10) => P -> @view(P[1:8, 3:-1:3]),   # one column, which is never stepped over
+        (10, 10) => P -> @view(P[1:8, 5]),        # vector
+        (10, 10) => P -> @view(P[1:8, 1:0]),      # no columns
+        (10, 10) => P -> view(view(P, 2:9, 1:10), :, 2:4),   # nested views
+        (10, 4, 3) => P -> @view(P[1:8, 2, :]),   # a slice of a higher dimensional array
+        (8, 8) => P -> @view(P[:, :]),            # the contiguous case, which always worked
+        (8, 8) => P -> @view(P[:, 2:4]),
+    ]
+    # libklu handles right-hand sides in chunks of up to 4, so go past that.
+    append!(views, [(12, 12) => P -> @view(P[3:10, 2:(1 + nrhs)]) for nrhs in 1:6])
+
+    @testset "$Tv elements, $Ti indices" for Tv in (Float64, ComplexF64), Ti in Base.uniontypes(KLUITypes)
+        A = convert(SparseMatrixCSC{Tv, Ti}, S)
+        Ad = Matrix(A)
+        F = klu(A)
+        ops = ((identity, Ad), (adjoint, Ad'), (transpose, transpose(Ad)))
+        @testset "$(nameof(op))" for (op, M) in ops, solver in (solve!, ldiv!), (dims, mk) in views
+            P = parent_of(Tv, dims...)
+            P0 = copy(P)
+            B = mk(P)
+            B0 = collect(B)
+            @test solver(op(F), B) === B
+            @test M * collect(B) ≈ B0
+            # Everything else in the parent is exactly as it was.
+            outside = trues(size(P))
+            outside[vec(collect(mk(LinearIndices(P))))] .= false
+            @test P[outside] == P0[outside]
+            # These do not modify their argument.
+            P = parent_of(Tv, dims...)
+            B = mk(P)
+            @test M * (op(F) \ B) ≈ B0
+            @test M * KLU.solve(op(F), B) ≈ B0
+            @test P == P0
+        end
+        @testset "Layouts libklu cannot use: $(nameof(op))" for (op, _) in ops, solver in (solve!, ldiv!)
+            for (dims, mk) in (
+                (16, 3) => P -> @view(P[1:2:15, :]),      # non contiguous columns
+                (16, 3) => P -> @view(P[1:2:15, 1]),      # non contiguous vector
+                (10, 10) => P -> @view(P[8:-1:1, 1:3]),   # reversed columns
+                (10, 10) => P -> @view(P[8:-1:1, 5]),
+                (10, 10) => P -> @view(P[1:8, 3:-1:1]),   # columns in reverse order
+                (10, 10) => P -> @view(P[8:-1:1, 3:-1:1]),
+                (8, 8) => P -> view(P, :, StepRangeLen(2, 0, 3)),   # the same column repeatedly
+            )
+                P = parent_of(Tv, dims...)
+                P0 = copy(P)
+                @test_throws ArgumentError solver(op(F), mk(P))
+                @test P == P0
+            end
+            P = parent_of(Tv, 10, 10)
+            P0 = copy(P)
+            @test_throws DimensionMismatch solver(op(F), @view(P[1:7, 1:3]))
+            @test P == P0
+        end
+    end
+    @testset "Real factorization and complex right-hand side, $Ti indices" for Ti in Base.uniontypes(KLUITypes)
+        A = convert(SparseMatrixCSC{Float64, Ti}, S)
+        Ad = Matrix(A)
+        F = klu(A)
+        @testset "$(nameof(op))" for (op, M) in ((identity, Ad), (adjoint, Ad'), (transpose, transpose(Ad))), (dims, mk) in views
+            P = parent_of(ComplexF64, dims...)
+            P0 = copy(P)
+            B = mk(P)
+            B0 = collect(B)
+            @test ldiv!(op(F), B) === B
+            @test M * collect(B) ≈ B0
+            outside = trues(size(P))
+            outside[vec(collect(mk(LinearIndices(P))))] .= false
+            @test P[outside] == P0[outside]
+        end
+    end
+end
+
 # Regression test for JuliaSparse/KLU.jl#38: libklu keeps scratch workspace inside the
 # Numeric object, so unsynchronized concurrent solves on one factorization return garbage.
 @testset "Concurrent use of a shared factorization (issue #38)" begin
