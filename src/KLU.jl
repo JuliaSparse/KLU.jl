@@ -274,9 +274,12 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
             Fx = C_NULL, Fz = C_NULL, Rs = C_NULL
         )
             Base.@lock klu begin
+                klu._numeric == C_NULL && throw(ArgumentError("This KLUFactorization has not yet been factored. Try `klu_factor!`."))
+                status = klu.common.status
                 $sort(klu._symbolic, klu._numeric, Ref(klu.common))
                 ok = $call
                 if ok == 1
+                    klu.common.status = status # libklu resets it, which would hide KLU_SINGULAR
                     return nothing
                 else
                     kluerror(klu.common)
@@ -462,8 +465,13 @@ end
 """
     klu_analyze!(K::KLUFactorization{Tv, Ti}, P::Vector{Ti}, Q::Vector{Ti}; check = true)
 
-Variant of `klu_analyze!` that allows for user-provided permutation permutation vectors `P` and `Q`."""
+Variant of `klu_analyze!` that allows for user-provided permutation vectors `P` and `Q`,
+which are zero-based, unlike `K.p` and `K.q`. Like `klu_analyze!`, this does nothing if `K`
+has already been analyzed."""
 function klu_analyze!(K::KLUFactorization{Tv, Ti}, P::Vector{Ti}, Q::Vector{Ti}; check=true) where {Tv, Ti<:KLUITypes}
+    # libklu does not validate these, and reads out of bounds if they are not permutations.
+    all(x -> length(x) == K.n && isperm(x .+ one(Ti)), (P, Q)) ||
+        throw(ArgumentError("P and Q must be zero-based permutations of length $(K.n)."))
     Base.@lock K begin
         if K._symbolic != C_NULL return K end
         if Ti == Int64
@@ -485,7 +493,7 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
     @eval begin
         function klu_factor!(K::KLUFactorization{$Tv, $Ti}; check=true, allowsingular=false)
             Base.@lock K begin
-                K._symbolic == C_NULL && K.common.status >= KLU_OK && klu_analyze!(K)
+                K._symbolic == C_NULL && K.common.status >= KLU_OK && klu_analyze!(K; check)
                 if K._symbolic != C_NULL && K.common.status >= KLU_OK
                     K.common.halt_if_singular = !allowsingular && check
                     num = $factor(K.colptr, K.rowval, K.nzval, K._symbolic, Ref(K.common))
@@ -700,7 +708,8 @@ end
     klu!(K::KLUFactorization, nzval::Vector{Tv}; check=true, allowsingular=false) -> K::KLUFactorization
 
 Recompute the KLU factorization `K` using the values of `A` or `nzval`. The pattern of the original
-matrix used to create `K` must match the pattern of `A`. 
+matrix used to create `K` must match the pattern of `A`. If `K` has not been factored yet, as after
+`klu(A; full_factor = false)`, this computes its first numeric factorization.
 
 For sparse `A` with real or complex element type, the return type of `K` is
 `KLUFactorization{Tv, Ti}`, with `Tv` = `Float64` or `ComplexF64`
@@ -732,6 +741,7 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
             length(nzval) != length(K.nzval)  && throw(DimensionMismatch())
             Base.@lock K begin
                 K.nzval = nzval
+                K._numeric == C_NULL && return klu_factor!(K; check, allowsingular)
                 K.common.halt_if_singular = !allowsingular && check
                 ok = $refactor(K.colptr, K.rowval, K.nzval, K._symbolic, K._numeric, Ref(K.common))
                 K.common.halt_if_singular = true
@@ -869,6 +879,8 @@ This function overwrites `B` with the solution `X`, for a new solution vector `X
     to solve them in a single call.
 """
 solve!
+# libklu's solvers reset `common.status`, so the methods below restore it, or a solve would
+# hide KLU_SINGULAR.
 for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
     solve_name = _klu_name("solve", Tv, Ti)
     @eval begin
@@ -877,8 +889,9 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
             size(B, 1) == size(klu, 1) || throw(DimensionMismatch())
             Base.@lock klu begin
                 klu._numeric == C_NULL && klu_factor!(klu)
-                isok = $solve_name(klu._symbolic, klu._numeric, ldim, size(B, 2), B, Ref(klu.common))
-                isok == 0 && check && kluerror(klu.common)
+                status = klu.common.status
+                isok =$solve_name(klu._symbolic, klu._numeric, ldim, size(B, 2), B, Ref(klu.common))
+                isok == 0 ? (check && kluerror(klu.common)) : (klu.common.status = status)
             end
             return B
         end
@@ -900,8 +913,9 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
             size(B, 1) == size(klu, 1) || throw(DimensionMismatch())
             Base.@lock klu begin
                 klu._numeric == C_NULL && klu_factor!(klu)
-                isok = $call
-                isok == 0 && check && kluerror(klu.common)
+                status = klu.common.status
+                isok =$call
+                isok == 0 ? (check && kluerror(klu.common)) : (klu.common.status = status)
             end
             return B
         end
@@ -912,8 +926,9 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
             size(B, 1) == size(klu, 1) || throw(DimensionMismatch())
             Base.@lock klu begin
                 klu._numeric == C_NULL && klu_factor!(klu)
-                isok = $call
-                isok == 0 && check && kluerror(klu.common)
+                status = klu.common.status
+                isok =$call
+                isok == 0 ? (check && kluerror(klu.common)) : (klu.common.status = status)
             end
             return B
         end
