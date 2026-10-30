@@ -337,3 +337,50 @@ end
     @test F._numeric != C_NULL
     @test F \ [1.0, 2.0] ≈ [1.0, 1.0]
 end
+
+@testset "Condition estimates and pivot growth (issue #29)" begin
+    @test all(s -> Base.isexported(KLU, s), (:rcond, :condest, :rgrowth))
+    # All irreducible, so that KLU uses one block and the definitions below are straightforward.
+    mild = sparse(Float64[4 1 0 0 0; 1 5 2 0 0; 0 2 6 1 0; 0 0 1 7 3; 0 0 0 3 8])
+    growth = sparse(Float64[0.01 1 0; 1 1 1; 0 1 2])
+    illcond = sparse(Float64[1 1 0; 1e-6 1e-6 + 1e-9 1; 0 1 1])
+    @testset "$Tv elements, $Ti indices" for Tv in (Float64, ComplexF64), Ti in Base.uniontypes(KLUITypes)
+        for A0 in (mild, growth, illcond)
+            A = convert(SparseMatrixCSC{Tv, Ti}, A0)
+            # A distinct phase on each entry, to check that complex values are passed correctly.
+            Tv <: Complex && (nonzeros(A) .*= cis.(1:nnz(A)))
+            F = klu(A)
+            @test F.nblocks == 1
+            Ad = Matrix(A)
+            U = Matrix(F.U)
+            Ā = Diagonal(F.Rs) \ A[F.p, F.q]
+            @test rcond(F) ≈ minimum(abs, diag(U)) / maximum(abs, diag(U))
+            @test rgrowth(F) ≈ minimum(j -> maximum(abs, Ā[:, j]) / maximum(abs, U[:, j]), axes(U, 2))
+            # condest is a lower bound on the 1-norm condition number, and usually a close one.
+            exact = opnorm(Ad, 1) * opnorm(inv(Ad), 1)
+            @test exact / 3 <= condest(F) <= exact * (1 + 1e-6)
+        end
+        # These are recomputed for the current factors after a refactorization.
+        A = convert(SparseMatrixCSC{Tv, Ti}, mild)
+        F = klu(A)
+        before = condest(F)
+        B = copy(A)
+        nonzeros(B)[1] *= 1e6
+        klu!(F, B)
+        Bd = Matrix(B)
+        @test condest(F) > before
+        @test condest(F) <= opnorm(Bd, 1) * opnorm(inv(Bd), 1) * (1 + 1e-6)
+        # A factorization which was not yet computed is computed on demand.
+        @test rcond(klu(A; full_factor = false)) == rcond(klu(A))
+        @test condest(klu(A; full_factor = false)) == condest(klu(A))
+        @test rgrowth(klu(A; full_factor = false)) == rgrowth(klu(A))
+    end
+    @testset "Singular matrices, $Tv elements" for Tv in (Float64, ComplexF64)
+        F = klu(sparse(Tv[1 2; 0 0]); allowsingular = true)
+        @test rcond(F) == 0
+        @test condest(F) == Inf
+        rgrowth(F) # libklu resets the status here
+        @test F.common.status == KLU.KLU_SINGULAR
+        @test !issuccess(F)
+    end
+end
