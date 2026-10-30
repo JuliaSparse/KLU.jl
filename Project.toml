@@ -10,6 +10,7 @@ SuiteSparse_jll = "bea87d4a-7f5b-5778-9afe-8cc45184846c"
 
 [compat]
 LinearAlgebra = "1.10"
+SuiteSparse_jll = "7.2"
 SparseArrays = "1.10"
 julia = "1.10"
 
