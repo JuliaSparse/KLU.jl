@@ -56,7 +56,7 @@ Please cite both [SuiteSparse](https://github.com/DrTimothyAldenDavis/SuiteSpars
 
 ## Exported API
 
-```@docs
+```@docs; canonical=false
 klu
 klu!
 klu_refactor!
