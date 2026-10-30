@@ -112,6 +112,14 @@ end
 
 abstract type AbstractKLUFactorization{Tv, Ti} <: LinearAlgebra.Factorization{Tv} end
 
+# `jl_atexit_hook` runs *all* finalizers, including those of objects that are still reachable,
+# while tasks on other threads may still be running. Freeing a `Numeric` or `Symbolic` then
+# would pull it out from under an in-flight `klu_solve`. The process is about to exit, so
+# the finalizers leave that memory to the OS. Hooks registered with `atexit` run before this
+# finalizer pass.
+const _EXITING = Threads.Atomic{Bool}(false)
+__init__() = (atexit(() -> (_EXITING[] = true; nothing)); nothing)
+
 
 """
     KLUFactorization <: Factorization
@@ -152,10 +160,11 @@ mutable struct KLUFactorization{Tv<:KLUTypes, Ti<:KLUITypes} <: AbstractKLUFacto
         Ti = eltype(colptr)
         common = _common(Ti)
         obj = new{eltype(nzval), Ti}(common, C_NULL, C_NULL, n, colptr, rowval, nzval, ReentrantLock())
-        # The finalizer deliberately does not take `obj.lock`: an object being finalized is
-        # unreachable, so no other task can be holding its lock or be inside a libklu call
-        # on it. (Any in-flight call keeps the object rooted.)
+        # During normal operation an object being finalized is unreachable, so no other task
+        # can be holding its lock or be inside a libklu call on it. (Any in-flight call keeps
+        # the object rooted.) That does not hold at process exit, see `_EXITING`.
         function f(klu)
+            _EXITING[] && return
             _free_symbolic(klu)
             _free_numeric(klu)
         end
