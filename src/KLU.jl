@@ -112,11 +112,9 @@ end
 
 abstract type AbstractKLUFactorization{Tv, Ti} <: LinearAlgebra.Factorization{Tv} end
 
-# `jl_atexit_hook` runs *all* finalizers, including those of objects that are still reachable,
-# while tasks on other threads may still be running. Freeing a `Numeric` or `Symbolic` then
-# would pull it out from under an in-flight `klu_solve`. The process is about to exit, so
-# the finalizers leave that memory to the OS. Hooks registered with `atexit` run before this
-# finalizer pass.
+# At exit Julia runs *all* finalizers, even for objects in use by tasks still running on other
+# threads, so freeing factors then crashes in-flight solves. `atexit` hooks run before this
+# finalizer pass, so use one to leave that memory to the OS.
 const _EXITING = Threads.Atomic{Bool}(false)
 __init__() = (atexit(() -> (_EXITING[] = true; nothing)); nothing)
 

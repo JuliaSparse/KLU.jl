@@ -145,7 +145,7 @@ end
     end
     """
     cmd = `$(Base.julia_cmd()) --startup-file=no --project=$(Base.active_project()) -t 4 -e $script`
-    @test success(pipeline(cmd; stdout = devnull, stderr = devnull))
+    @test success(pipeline(cmd; stdout = devnull))
 end
 
 @testset "full_factor = false" begin
