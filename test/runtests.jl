@@ -94,7 +94,62 @@ using LinearAlgebra
                 S = convert(SparseMatrixCSC{Tv, Ti}, S)
                 @test_throws SingularException klu(S)
             end
+
+            # The default deepcopy copied the raw libklu pointers (issue #12), so a copy shared
+            # the libklu objects with its source and either could free them under the other.
+            @testset "$dup of a KLUFactorization" for dup in (copy, deepcopy)
+                B = convert(SparseMatrixCSC{Tv, Ti}, A1)
+                b = Tv[8., 45., -3., 3., 19.]
+                Ab, Bb = Matrix(A) \ b, Matrix(B) \ b
+                K = klu(A)
+                C = dup(K)
+                @test C isa KLUFactorization{Tv, Ti}
+                @test C.lock !== K.lock && C.common !== K.common
+                @test C.colptr !== K.colptr && C.rowval !== K.rowval && C.nzval !== K.nzval
+                @test C._symbolic != K._symbolic && C._numeric != K._numeric
+                @test (C.L, C.U, C.F, C.p, C.q, C.Rs) == (K.L, K.U, K.F, K.p, K.q, K.Rs)
+                @test C.common.memusage == K.common.memusage
+                klu!(C, B)
+                @test C \ b ≈ Bb
+                @test K \ b ≈ Ab
+                C = dup(K)
+                klu!(K, B)
+                @test K \ b ≈ Bb
+                @test C \ b ≈ Ab
+                KLU._free_numeric(K)
+                KLU._free_symbolic(K)
+                @test C \ b ≈ Ab
+
+                # The state of the source is kept.
+                C = dup(KLUFactorization(A))
+                @test C._symbolic == C_NULL && C._numeric == C_NULL
+                C = dup(klu(A; full_factor = false))
+                @test C._symbolic != C_NULL && C._numeric == C_NULL
+                @test C \ b ≈ Ab
+                C = dup(klu(convert(SparseMatrixCSC{Tv, Ti}, sparse([1, 2], [1, 2], [1., 0.])); allowsingular = true))
+                @test C._numeric != C_NULL
+                @test C.common.status == KLU.KLU_SINGULAR
+
+                # So are settings and user-provided permutations.
+                P, Q = Ti[4, 3, 2, 1, 0], Ti[0, 2, 1, 4, 3]
+                K = KLUFactorization(A)
+                K.common.btf = 0
+                klu_analyze!(K, P, Q)
+                C = dup(K)
+                @test C.common.btf == 0
+                @test unsafe_wrap(Array, C.symbolic.P, 5) == P
+                @test unsafe_wrap(Array, C.symbolic.Q, 5) == Q
+                @test C \ b ≈ Ab
+            end
         end
+    end
+    @testset "deepcopy keeps aliasing within the copied object" begin
+        A = copy(A0)
+        K = klu(A)
+        K2, K3, A2 = deepcopy((K, K, A))
+        @test K2 === K3
+        @test nonzeros(K2) === nonzeros(A2) !== nonzeros(A)
+        @test parent(deepcopy(K'))._numeric != K._numeric
     end
     @testset "REPL printing of KLU" begin
         A = sparse([1, 2], [1, 2], Float64[1.0, 1.0])
@@ -204,6 +259,21 @@ end
                 end
             end
         end
+        # One copy per task, refactoring it, as in issue #12.
+        residuals .= 0
+        @sync for (t, C) in enumerate([deepcopy(F) for _ in 1:ntasks])
+            Threads.@spawn begin
+                At = copy(As)
+                nonzeros(At) .*= t
+                b = rand(Tv, n)
+                for _ in 1:20
+                    klu!(C, At)
+                    residuals[t] = max(residuals[t], norm(At * (C \ b) - b) / norm(b))
+                end
+            end
+        end
+        @test all(residuals .< 1e-10)
+
         # a caller may hold the lock across several operations
         @test !islocked(F)
         Base.@lock F begin
