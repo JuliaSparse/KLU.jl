@@ -38,6 +38,27 @@ julia> x = factor \ b
   10.688731342850245
 ```
 
+## Reusing a factorization
+
+If only the values of a matrix change, `klu!` refactors faster than `klu`. It reuses the
+pivot order, and throws an `ArgumentError` if the pattern is different.
+
+```julia
+julia> klu!(factor, B);          # B has the same pattern as A
+
+julia> klu!(factor, nonzeros(B)); # or just its values
+```
+
+`klu(A; full_factor = false)` only analyzes the pattern of `A`, and `klu!` then computes the
+first numeric factorization. Use `copy(factor)` to get an independent factorization, for
+example to refactor it without affecting the original. This costs as much as a new
+factorization.
+
+## Checking a factorization
+
+`rcond` is a cheap estimate of the reciprocal condition number, `condest` is a more accurate
+estimate of the 1-norm condition number, and `rgrowth` is the reciprocal pivot growth.
+
 ## Thread safety
 
 KLU's C library keeps scratch workspace *inside* each numeric factorization, so two
@@ -52,13 +73,14 @@ The lock is reentrant and can be held by the user across a sequence of calls wit
 
 ## Citing this package
 
-Please cite both [SuiteSparse](https://github.com/DrTimothyAldenDavis/SuiteSparse/blob/dev/CITATION.bib) as well as [KLU](https://github.com/JuliaSparse/KLU.jl/blob/main/CITATION.bib):
+Please cite both [SuiteSparse](https://github.com/DrTimothyAldenDavis/SuiteSparse/blob/dev/CITATION.bib) as well as [KLU](https://github.com/JuliaSparse/KLU.jl/blob/main/CITATION.bib).
 
 ## Exported API
 
 ```@docs; canonical=false
 klu
 klu!
+klu_factor!
 klu_refactor!
 nonzeros
 solve!
@@ -66,4 +88,5 @@ rcond
 condest
 rgrowth
 KLU.KLUFactorization
+Base.copy(::KLU.KLUFactorization)
 ```
