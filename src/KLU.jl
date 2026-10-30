@@ -112,6 +112,12 @@ end
 
 abstract type AbstractKLUFactorization{Tv, Ti} <: LinearAlgebra.Factorization{Tv} end
 
+# At exit Julia runs *all* finalizers, even for objects in use by tasks still running on other
+# threads, so freeing factors then crashes in-flight solves. `atexit` hooks run before this
+# finalizer pass, so use one to leave that memory to the OS.
+const _EXITING = Threads.Atomic{Bool}(false)
+__init__() = (atexit(() -> (_EXITING[] = true; nothing)); nothing)
+
 
 """
     KLUFactorization <: Factorization
@@ -152,10 +158,11 @@ mutable struct KLUFactorization{Tv<:KLUTypes, Ti<:KLUITypes} <: AbstractKLUFacto
         Ti = eltype(colptr)
         common = _common(Ti)
         obj = new{eltype(nzval), Ti}(common, C_NULL, C_NULL, n, colptr, rowval, nzval, ReentrantLock())
-        # The finalizer deliberately does not take `obj.lock`: an object being finalized is
-        # unreachable, so no other task can be holding its lock or be inside a libklu call
-        # on it. (Any in-flight call keeps the object rooted.)
+        # During normal operation an object being finalized is unreachable, so no other task
+        # can be holding its lock or be inside a libklu call on it. (Any in-flight call keeps
+        # the object rooted.) That does not hold at process exit, see `_EXITING`.
         function f(klu)
+            _EXITING[] && return
             _free_symbolic(klu)
             _free_numeric(klu)
         end

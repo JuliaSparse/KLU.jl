@@ -124,6 +124,30 @@ end
     end
 end
 
+# Regression test for JuliaSparse/KLU.jl#31: at exit Julia runs all finalizers, including those
+# of objects in use by tasks which are still running, which must not free their factors.
+@testset "Exiting while other tasks are solving" begin
+    script = """
+    using KLU, SparseArrays
+    n = 2000
+    A = spdiagm(-1 => fill(-1.0, n - 1), 0 => fill(4.0, n), 1 => fill(-1.0, n - 1))
+    # Staggered deadlines, so that some tasks are still solving if the main thread has to
+    # finish one of the others before it can exit.
+    start = time()
+    for i in 1:(2 * Threads.nthreads())
+        Threads.@spawn begin
+            F = klu(A)
+            b = ones(n)
+            while time() - start < 0.5 * i
+                F \\ b
+            end
+        end
+    end
+    """
+    cmd = `$(Base.julia_cmd()) --startup-file=no --project=$(Base.active_project()) -t 4 -e $script`
+    @test success(pipeline(cmd; stdout = devnull))
+end
+
 @testset "full_factor = false" begin
     for T in (Float64, ComplexF64, Float32, ComplexF32)
         A = sparse(Matrix{T}([1 0; 1 1]))
