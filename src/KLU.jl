@@ -818,12 +818,10 @@ function Base.deepcopy_internal(K::KLUFactorization{Tv, Ti}, stackdict::IdDict) 
     end
 end
 
-# The `ldim` argument of libklu's solvers: the distance from the start of one column of `B`
-# to the start of the next, counted in elements of `B` (`Entry`s, so complex numbers rather
-# than doubles). libklu only ever walks forward from the first element with this step, so
-# it must be at least the column length, or columns would be written on top of each other.
-# With fewer than two columns it is never used to step, so the column length is always fine.
+# libklu's `ldim`: the distance between the starts of columns of `B`, in elements of `B`. libklu
+# only steps forward by it, so it must be at least the column length. Unused for a single column.
 function _ldim(B::StridedVecOrMat)
+    stride(B, 1) == 1 || throw(ArgumentError("B must have unit stride along its first dimension"))
     n, nrhs = size(B, 1), size(B, 2)
     nrhs <= 1 && return n
     ldim = stride(B, 2)
@@ -866,11 +864,11 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
     solve_name = _klu_name("solve", Tv, Ti)
     @eval begin
         function solve!(klu::AbstractKLUFactorization{$Tv, $Ti}, B::StridedVecOrMat{$Tv}; check=true)
-            stride(B, 1) == 1 || throw(ArgumentError("B must have unit stride along its first dimension"))
+            ldim = _ldim(B)
             size(B, 1) == size(klu, 1) || throw(DimensionMismatch())
             Base.@lock klu begin
                 klu._numeric == C_NULL && klu_factor!(klu)
-                isok = $solve_name(klu._symbolic, klu._numeric, _ldim(B), size(B, 2), B, Ref(klu.common))
+                isok = $solve_name(klu._symbolic, klu._numeric, ldim, size(B, 2), B, Ref(klu.common))
                 isok == 0 && check && kluerror(klu.common)
             end
             return B
@@ -881,15 +879,15 @@ end
 for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
     tsolve = _klu_name("tsolve", Tv, Ti)
     if Tv === :ComplexF64
-        call = :($tsolve(klu._symbolic, klu._numeric, _ldim(B), size(B, 2), B, conj, Ref(klu.common)))
+        call = :($tsolve(klu._symbolic, klu._numeric, ldim, size(B, 2), B, conj, Ref(klu.common)))
     else
-        call = :($tsolve(klu._symbolic, klu._numeric, _ldim(B), size(B, 2), B, Ref(klu.common)))
+        call = :($tsolve(klu._symbolic, klu._numeric, ldim, size(B, 2), B, Ref(klu.common)))
     end
     @eval begin
         function solve!(klu::AdjointFact{$Tv, K}, B::StridedVecOrMat{$Tv}; check=true) where {K<:AbstractKLUFactorization{$Tv, $Ti}}
             conj = 1
             klu = parent(klu)
-            stride(B, 1) == 1 || throw(ArgumentError("B must have unit stride along its first dimension"))
+            ldim = _ldim(B)
             size(B, 1) == size(klu, 1) || throw(DimensionMismatch())
             Base.@lock klu begin
                 klu._numeric == C_NULL && klu_factor!(klu)
@@ -901,7 +899,7 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
         function solve!(klu::TransposeFact{$Tv, K}, B::StridedVecOrMat{$Tv}; check=true) where {K<: AbstractKLUFactorization{$Tv, $Ti}}
             conj = 0
             klu = parent(klu)
-            stride(B, 1) == 1 || throw(ArgumentError("B must have unit stride along its first dimension"))
+            ldim = _ldim(B)
             size(B, 1) == size(klu, 1) || throw(DimensionMismatch())
             Base.@lock klu begin
                 klu._numeric == C_NULL && klu_factor!(klu)
