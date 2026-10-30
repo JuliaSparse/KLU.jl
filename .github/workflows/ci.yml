@@ -11,29 +11,25 @@ on:
     tags: '*'
 jobs:
   test:
-    name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ github.event_name }}
+    name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ github.event_name }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         version:
-          - '1'    # Current stable version
+          - '1'
         os:
           - ubuntu-latest
+          - macOS-latest
           - windows-latest
-          - macOS-15-intel # intel
-        arch:
-          - x64
         include:
-          - os: macOS-latest
-            arch: aarch64
-            version: '1'
+          - version: 'min'
+            os: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: julia-actions/setup-julia@v3
         with:
           version: ${{ matrix.version }}
-          arch: ${{ matrix.arch }}
       - uses: julia-actions/cache@v3
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
@@ -42,6 +38,24 @@ jobs:
         with:
           files: lcov.info
           token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+  aqua:
+    name: Aqua
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: '1'
+      - uses: julia-actions/cache@v3
+      - run: |
+          julia --color=yes -e '
+            using Pkg
+            Pkg.activate(temp = true)
+            Pkg.develop(PackageSpec(path = pwd()))
+            Pkg.add(name = "Aqua", version = "0.8")
+            using Aqua, KLU
+            Aqua.test_all(KLU)'
   docs:
     name: Documentation
     runs-on: ubuntu-latest
@@ -50,6 +64,7 @@ jobs:
       - uses: julia-actions/setup-julia@v3
         with:
           version: '1'
+      - uses: julia-actions/cache@v3
       - run: |
           julia --project=docs -e '
             using Pkg
