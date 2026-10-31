@@ -51,8 +51,10 @@ julia> klu!(factor, nonzeros(B)); # or just its values
 If `klu!` throws a `SingularException`, `factor` has no numeric factorization until a later
 `klu!` or `klu_factor!` succeeds, and solving with it throws as well.
 
-A factorization keeps its own copy of the values and pattern it is given, so later changes to
-`A`, `B`, or their vectors have no effect on it. To factor changed values, call `klu!`.
+To avoid using more memory, `factor` shares the vectors it is given: after `klu(A)` or
+`klu!(factor, B)` with `Float64` or `ComplexF64` values, `nonzeros(factor)` is the vector of `A`
+or `B`. It is the caller's responsibility not to change them in a way that breaks `factor`, as
+described in the docstring of `klu`.
 
 `klu(A; full_factor = false)` only analyzes the pattern of `A`, and `klu!` then computes the
 first numeric factorization. Use `copy(factor)` to get an independent factorization, for

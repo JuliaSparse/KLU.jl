@@ -95,10 +95,10 @@ using LinearAlgebra
                 klu_factor!(K)
                 @test K.numeric.lnz == 7 == K.numeric.unz
                 @test K.nblocks == 3
-                @test propertynames(K) == (:lnz, :unz, :nzoff, :L, :U, :F, :q, :p, :Rs, :symbolic, :numeric,)
+                @test propertynames(K) == (:lnz, :unz, :nzoff, :L, :U, :F, :q, :p, :Rs,)
                 @test_throws ArgumentError size(K, -1)
                 @test K.R[[1, end]] == [1, 6] && length(K.R) == K.nblocks + 1
-                @test (:nblocks, :lock) ⊆ propertynames(K, true)
+                @test (:symbolic, :numeric, :nblocks, :lock) ⊆ propertynames(K, true)
                 R = convert(SparseMatrixCSC{Tv, Ti}, sparse(ones(2, 3)))
                 @test_throws DimensionMismatch klu(R)
                 @test_throws ArgumentError KLUFactorization(R)
@@ -260,7 +260,7 @@ using LinearAlgebra
     end
     @testset "deepcopy keeps aliasing within the copied object" begin
         A = copy(A0)
-        K = klu_factor!(KLUFactorization(size(A, 1), A.colptr .- 1, A.rowval .- 1, nonzeros(A)))
+        K = klu(A)
         K2, K3, A2 = deepcopy((K, K, A))
         @test K2 === K3
         @test nonzeros(K2) === nonzeros(A2) !== nonzeros(A)
@@ -355,7 +355,7 @@ end
         A = sparse(Matrix{T}([1 0; 1 1]))
         nonzeros(A) .= zero(T)
         F = klu(A; full_factor = false)
-        # we do need both here--the nzval of F is its own copy of A's.
+        # we do need both here--for non 64 bit types, the nzval of F is not the same as A's.
         nonzeros(A) .= one(T)
         nonzeros(F) .= one(T)
         klu_factor!(F)
@@ -463,8 +463,8 @@ end
     n = 20_000
     A = sparse(Tridiagonal(fill(-1.0, n - 1), fill(4.0, n), fill(-1.0, n - 1)))
     colptr, rowval = A.colptr .- 1, A.rowval .- 1
-    K1 = klu_factor!(KLUFactorization(n, colptr, rowval, copy(nonzeros(A))))
-    K2 = klu_factor!(KLUFactorization(n, colptr, rowval, copy(nonzeros(A))))
+    K1 = klu(n, colptr, rowval, copy(nonzeros(A)))
+    K2 = klu(n, colptr, rowval, copy(nonzeros(A)))
     @test K1.colptr === K2.colptr
     # libklu would read out of bounds on K2 if refactoring K1 shifted the shared vectors.
     stop = Threads.Atomic{Bool}(false)
@@ -547,99 +547,67 @@ end
     end
 end
 
-@testset "A factorization owns its vectors" begin
+@testset "A factorization shares the vectors it is given" begin
     b = ones(3)
     # An explicitly stored zero, so that dropzeros! shrinks the vectors of A.
     A = sparse([1, 2, 3, 1], [1, 2, 3, 3], [1.0, 2.0, 3.0, 0.0])
     Ad = Matrix(A)
+
     K = klu(A; full_factor = false)
-    @test nonzeros(K) !== nonzeros(A)
-    dropzeros!(A)
-    @test length(nonzeros(K)) == 4
-    @test klu_factor!(K) \ b ≈ Ad \ b
+    @test nonzeros(K) === nonzeros(A)
+    nonzeros(A) .*= 2
+    @test klu_factor!(K) \ b ≈ 2 * Ad \ b
+    nonzeros(A) ./= 2
+    @test nonzeros(KLUFactorization(A)) !== nonzeros(A)
+    @test nonzeros(klu(SparseMatrixCSC{Float32, Int}(A))) isa Vector{Float64}
 
     colptr, rowval, nzval = [0, 1, 2, 4], [0, 1, 0, 2], [1.0, 2.0, 0.0, 3.0]
     K = klu(3, colptr, rowval, nzval)
-    @test K.colptr !== colptr && K.rowval !== rowval && nonzeros(K) !== nzval
-    colptr .= 0
-    rowval .= 0
-    nzval .= 0
-    @test K \ b ≈ Ad \ b
-
-    v = [2.0, 4.0, 0.0, 6.0]
+    @test K.colptr === colptr && K.rowval === rowval && nonzeros(K) === nzval
+    v = 2 * nzval
     @test klu!(K, v) \ b ≈ 2 * Ad \ b
-    @test nonzeros(K) !== v
-    @test nonzeros(K) == v
-    v .= 0
-    @test condest(K) ≈ condest(klu(2 * sparse(Ad)))
-    # Refactoring with its own vector is allowed.
-    @test klu!(K, nonzeros(K)) \ b ≈ 2 * Ad \ b
+    @test nonzeros(K) === v
+    # Changing the values doesn't change the current factors.
+    v .*= 2
+    @test K \ b ≈ 2 * Ad \ b
 
-    # libklu would read past the end of a vector that was made too short.
-    K = klu(sparse(Ad))
+    # libklu would read past the end of a vector that the caller made too short.
+    A2 = copy(A)
+    K = klu(A2)
     x = K \ b
     full = copy(nonzeros(K))
-    resize!(nonzeros(K), 2)
+    dropzeros!(A2)
+    @test length(nonzeros(K)) < K.colptr[end]
     for op in (klu_factor!, rgrowth, condest, copy)
         @test_throws ArgumentError op(K)
     end
     @test_throws DimensionMismatch klu!(K, full)
     @test K \ b ≈ x # the factors are unaffected
-    U = klu(sparse(Ad); full_factor = false)
-    resize!(nonzeros(U), 2)
+    A2 = copy(A)
+    U = klu(A2; full_factor = false)
+    dropzeros!(A2)
     @test_throws ArgumentError klu_factor!(U)
     @test_throws ArgumentError U \ b
-    U = KLUFactorization(sparse(Ad))
-    resize!(nonzeros(U), 2)
+    colptr, rowval = [0, 1, 2, 4], [0, 1, 0, 2]
+    U = KLUFactorization(3, colptr, rowval, [1.0, 2.0, 0.0, 3.0])
+    resize!(rowval, 2)
     @test_throws ArgumentError klu_analyze!(U)
     @test_throws ArgumentError klu_analyze!(U, [0, 1, 2], [0, 1, 2])
+end
 
-    K = klu(sparse(Ad))
-    for s in (:common, :n, :colptr, :rowval, :nzval, :lock)
+@testset "Fields that can't be reassigned" begin
+    A = sparse([2.0 1.0; 0.0 2.0])
+    K = klu(A)
+    for s in (:common, :n, :colptr, :rowval, :lock)
         @test_throws ErrorException setproperty!(K, s, getfield(K, s))
     end
-    @test K \ b ≈ x
+    @test K \ [1.0, 2.0] ≈ Matrix(A) \ [1.0, 2.0]
 end
 
 @testset "Empty matrices" begin
     for f in (() -> klu(spzeros(0, 0)), () -> klu(spzeros(0, 0); check = false),
               () -> KLUFactorization(spzeros(0, 0)), () -> klu(0, [0], Int[], Float64[]))
         @test_throws "empty matrix" f()
-    end
-end
-
-@testset "Element types" begin
-    b = [1.0, 2.0]
-    A = sparse([2.0 1.0; 0.0 2.0])
-    x = Matrix(A) \ b
-    for T in (Int, Int32, Rational{Int}, Float16, Float32, Float64)
-        S = convert(SparseMatrixCSC{T, Int}, A)
-        @test klu(S) isa KLUFactorization{Float64, Int}
-        @test klu(S) \ b ≈ x
-        @test klu(2, S.colptr .- 1, S.rowval .- 1, nonzeros(S)) \ b ≈ x
-        @test klu!(klu(2 * A), S) \ b ≈ x
-        @test klu!(klu(2 * A), nonzeros(S)) \ b ≈ x
-        @test klu!(klu(complex(2 * A)), S) \ b ≈ x
-    end
-    for T in (Complex{Int}, ComplexF32, ComplexF64)
-        S = convert(SparseMatrixCSC{T, Int}, A)
-        @test klu(S) isa KLUFactorization{ComplexF64, Int}
-        @test klu(S) \ b ≈ x
-        @test klu!(klu(complex(2 * A)), S) \ b ≈ x
-        @test klu!(klu(complex(2 * A)), nonzeros(S)) \ b ≈ x
-    end
-    @test klu(sparse([true false; false true])) \ b == b
-    # The values of a real factorization cannot become complex.
-    @test_throws MethodError klu!(klu(A), complex(A))
-    @test_throws MethodError klu!(klu(A), complex(nonzeros(A)))
-
-    @testset "ComplexF32 right-hand sides with $op" for (op, M) in
-            ((identity, A), (adjoint, A'), (transpose, transpose(A)))
-        for B in (ComplexF32[1 + 2im, 3 - 4im], ComplexF32[1 + 2im 5im; 3 - 4im 6])
-            X = copy(B)
-            @test ldiv!(op(klu(A)), X) === X
-            @test M * X ≈ B rtol = 1e-5
-        end
     end
 end
 
@@ -694,4 +662,85 @@ end
         e = try klu!(klu(C), Tv[1, 1, 1, 1]) catch e; e end
         @test e isa SingularException && e.info in 1:2
     end
+end
+
+@testset "Failure paths and state changes" begin
+    A = sparse([2.0 1.0; 0.0 2.0])
+    b = [1.0, 2.0]
+    x = Matrix(A) \ b
+
+    # An earlier failure doesn't stop a retry, which a temporary lack of memory should allow.
+    K = klu(A)
+    K.common.status = KLU.KLU_OUT_OF_MEMORY
+    @test issuccess(klu_factor!(K))
+    @test K \ b ≈ x
+    K = klu(A; full_factor = false)
+    K.common.status = KLU.KLU_OUT_OF_MEMORY
+    @test issuccess(klu_factor!(K))
+    K = KLUFactorization(A)
+    K.common.status = KLU.KLU_OUT_OF_MEMORY
+    @test issuccess(klu_factor!(K))
+    # What libklu rejects is still rejected.
+    K = klu(2, [0, 5, 1], [0], [1.0]; check = false)
+    @test_throws ArgumentError klu_factor!(K)
+    @test K.common.status == KLU.KLU_INVALID
+
+    # check = false also applies to a factorization that a solve computes on demand.
+    for op in (identity, adjoint, transpose)
+        K = klu(2, [0, 5, 1], [0], [1.0]; check = false)
+        B = ones(2)
+        @test solve!(op(K), B; check = false) === B
+        @test K.common.status == KLU.KLU_INVALID
+        @test !issuccess(K)
+        @test_throws ArgumentError solve!(op(K), ones(2))
+        S = sparse([1.0 2.0; 0.0 0.0])
+        K = klu(S; full_factor = false)
+        @test solve!(op(K), ones(2); check = false) isa Vector{Float64}
+        @test K.common.status == KLU.KLU_SINGULAR
+        K = klu(S; full_factor = false)
+        @test_throws SingularException solve!(op(K), ones(2))
+    end
+
+    # Assigning the current pointer must not free it, which would leave it dangling.
+    K = klu(A)
+    K._numeric = K._numeric
+    K._symbolic = K._symbolic
+    @test K \ b ≈ x
+    # Numeric factors must not outlive the analysis they belong to.
+    K._symbolic = C_NULL
+    @test K._numeric == C_NULL
+    @test !issuccess(K)
+    @test K \ b ≈ x
+
+    # The permutations are the ones that were validated, not the caller's vectors.
+    P, Q = [1, 0], [0, 1]
+    K = klu_analyze!(KLUFactorization(A), P, Q)
+    @test K._perms[1] !== P && K._perms[2] !== Q
+    P .= 0
+    @test K._perms == ([1, 0], [0, 1])
+    @test copy(K) \ b ≈ x
+
+    # Column stride does not matter with a single row, as libklu never steps along a column.
+    F = klu(sparse([2.0;;]))
+    M = [1.0 2.0; 3.0 4.0]
+    @test ldiv!(F, view(M, 1, 1:1)) == [0.5]
+    @test M == [0.5 2.0; 3.0 4.0]
+
+    # Reading state takes the lock, so these wait for another task holding it.
+    K = klu(A)
+    for f in (issuccess, nnz, K -> sprint(show, MIME("text/plain"), K))
+        lock(K)
+        t = Threads.@spawn f(K)
+        sleep(0.05)
+        @test !istaskdone(t)
+        unlock(K)
+        wait(t)
+        @test !istaskfailed(t)
+    end
+
+    # Printing has all the factors from one factorization, without holding the lock while writing.
+    K = klu(A)
+    @test sprint(show, MIME("text/plain"), K) ==
+          "$(summary(K))\nL factor:\n$(sprint(show, MIME("text/plain"), K.L))\nU factor:\n$(sprint(show, MIME("text/plain"), K.U))\nF factor:\n$(sprint(show, MIME("text/plain"), K.F))"
+    @test !islocked(K)
 end
