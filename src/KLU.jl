@@ -164,10 +164,12 @@ mutable struct KLUFactorization{Tv<:KLUTypes, Ti<:KLUITypes} <: AbstractKLUFacto
     # Serializes all libklu calls on this object. KLU keeps per-call scratch space inside
     # the Numeric object, so concurrent solves/refactors on one factorization are a data race.
     lock::ReentrantLock
+    # The permutations given to `klu_analyze!`, if any, so that a copy can analyze with them.
+    _perms::Union{Nothing, Tuple{Vector{Ti}, Vector{Ti}}}
     function KLUFactorization(n, colptr, rowval, nzval)
         Ti = eltype(colptr)
         common = _common(Ti)
-        obj = new{eltype(nzval), Ti}(common, C_NULL, C_NULL, n, colptr, rowval, nzval, ReentrantLock())
+        obj = new{eltype(nzval), Ti}(common, C_NULL, C_NULL, n, colptr, rowval, nzval, ReentrantLock(), nothing)
         # During normal operation an object being finalized is unreachable, so no other task
         # can be holding its lock or be inside a libklu call on it. (Any in-flight call keeps
         # the object rooted.) That does not hold at process exit, see `_EXITING`.
@@ -318,6 +320,7 @@ function getproperty(klu::AbstractKLUFactorization{Tv, Ti}, s::Symbol) where {Tv
         klu._symbolic == C_NULL && throw(ArgumentError("This KLUFactorization has not yet been analyzed. Try `klu_analyze!`."))
         return getproperty(klu.symbolic, s)
     end
+    # libklu has no getters, so these copy its structs. They are the only reads of libklu's memory.
     if s === :symbolic
         Base.@lock klu begin
             klu._symbolic == C_NULL && throw(ArgumentError("This KLUFactorization has not yet been analyzed. Try `klu_analyze!`."))
@@ -343,75 +346,81 @@ function getproperty(klu::AbstractKLUFactorization{Tv, Ti}, s::Symbol) where {Tv
         return getfield(klu, s)
     end
     # Factor parts:
-    if s === :(_L)
-        lnz = klu.lnz
-        Lp = Vector{Ti}(undef, klu.n + 1)
-        Li = Vector{Ti}(undef, lnz)
-        Lx = Vector{Float64}(undef, lnz)
-        # could also be replaced with multiple dispatch.
-        Lz = Tv == Float64 ? C_NULL : Vector{Float64}(undef, lnz)
-        _extract!(klu; Lp, Li, Lx, Lz)
-        return Lp, Li, Lx, Lz
-    elseif s === :(_U)
-        unz = klu.unz
-        Up = Vector{Ti}(undef, klu.n + 1)
-        Ui = Vector{Ti}(undef, unz)
-        Ux = Vector{Float64}(undef, unz)
-        Uz = Tv == Float64 ? C_NULL : Vector{Float64}(undef, unz)
-        _extract!(klu; Up, Ui, Ux, Uz)
-        return Up, Ui, Ux, Uz
-    elseif s === :(_F)
-        fnz = klu.nzoff
-        # We often don't have an F, so create the right vectors for an empty SparseMatrixCSC
-        if fnz == 0
-            Fp = zeros(Ti, klu.n + 1)
-            Fi = Vector{Ti}()
-            Fx = Vector{Float64}()
-            Fz = Tv == Float64 ? C_NULL : Vector{Float64}()
-        else
-            Fp = Vector{Ti}(undef, klu.n + 1)
-            Fi = Vector{Ti}(undef, fnz)
-            Fx = Vector{Float64}(undef, fnz)
-            Fz = Tv == Float64 ? C_NULL : Vector{Float64}(undef, fnz)
-            _extract!(klu; Fp, Fi, Fx, Fz)
-            # F is *not* sorted on output, so we'll have to do it here:
-            for i ∈ 1:(length(Fp) - 1)
-                # find each segment
-                first = Fp[i] + 1
-                last = Fp[i+1]
-                first > last && (continue)
-                first == length(Fi) && (break)
-                # sort each column of rowval, nzval, and Fz for complex numbers if necessary
-                #by the ascending permutation of rowval.
-                Fiview = view(Fi, first:last)
-                Fxview = view(Fx, first:last)
-                P = sortperm(Fiview)
-                Fiview .= Fiview[P]
-                Fxview .= Fxview[P]
-                if Fz != C_NULL && length(Fz) == length(Fx)
-                    Fzview = view(Fz, first:last)
-                    Fzview .= Fzview[P]
+    # The lock is held from sizing the buffers to filling them, as refactoring from another task
+    # could otherwise change the sizes, and libklu would write past the end of the buffers.
+    if s ∈ (:(_L), :(_U), :(_F), :q, :p, :R, :Rs)
+        Base.@lock klu begin
+            if s === :(_L)
+                lnz = klu.lnz
+                Lp = Vector{Ti}(undef, klu.n + 1)
+                Li = Vector{Ti}(undef, lnz)
+                Lx = Vector{Float64}(undef, lnz)
+                # could also be replaced with multiple dispatch.
+                Lz = Tv == Float64 ? C_NULL : Vector{Float64}(undef, lnz)
+                _extract!(klu; Lp, Li, Lx, Lz)
+                return Lp, Li, Lx, Lz
+            elseif s === :(_U)
+                unz = klu.unz
+                Up = Vector{Ti}(undef, klu.n + 1)
+                Ui = Vector{Ti}(undef, unz)
+                Ux = Vector{Float64}(undef, unz)
+                Uz = Tv == Float64 ? C_NULL : Vector{Float64}(undef, unz)
+                _extract!(klu; Up, Ui, Ux, Uz)
+                return Up, Ui, Ux, Uz
+            elseif s === :(_F)
+                fnz = klu.nzoff
+                # We often don't have an F, so create the right vectors for an empty SparseMatrixCSC
+                if fnz == 0
+                    Fp = zeros(Ti, klu.n + 1)
+                    Fi = Vector{Ti}()
+                    Fx = Vector{Float64}()
+                    Fz = Tv == Float64 ? C_NULL : Vector{Float64}()
+                else
+                    Fp = Vector{Ti}(undef, klu.n + 1)
+                    Fi = Vector{Ti}(undef, fnz)
+                    Fx = Vector{Float64}(undef, fnz)
+                    Fz = Tv == Float64 ? C_NULL : Vector{Float64}(undef, fnz)
+                    _extract!(klu; Fp, Fi, Fx, Fz)
+                    # F is *not* sorted on output, so we'll have to do it here:
+                    for i ∈ 1:(length(Fp) - 1)
+                        # find each segment
+                        first = Fp[i] + 1
+                        last = Fp[i+1]
+                        first > last && (continue)
+                        first == length(Fi) && (break)
+                        # sort each column of rowval, nzval, and Fz for complex numbers if necessary
+                        #by the ascending permutation of rowval.
+                        Fiview = view(Fi, first:last)
+                        Fxview = view(Fx, first:last)
+                        P = sortperm(Fiview)
+                        Fiview .= Fiview[P]
+                        Fxview .= Fxview[P]
+                        if Fz != C_NULL && length(Fz) == length(Fx)
+                            Fzview = view(Fz, first:last)
+                            Fzview .= Fzview[P]
+                        end
+                    end
                 end
+                return Fp, Fi, Fx, Fz
+            end
+            if s ∈ (:q, :p, :R, :Rs)
+                if s === :Rs
+                    out = Vector{Float64}(undef, klu.n)
+                elseif s === :R
+                    out = Vector{Ti}(undef, klu.nblocks + 1)
+                else
+                    out = Vector{Ti}(undef, klu.n)
+                end
+                # This tuple construction feels hacky, there's a better way I'm sure.
+                s === :q && (s = :Q)
+                s === :p && (s = :P)
+                _extract!(klu; NamedTuple{(s,)}((out,))...)
+                if s ∈ (:Q, :P, :R)
+                    increment!(out)
+                end
+                return out
             end
         end
-        return Fp, Fi, Fx, Fz
-    end
-    if s ∈ (:q, :p, :R, :Rs)
-        if s === :Rs
-            out = Vector{Float64}(undef, klu.n)
-        elseif s === :R
-            out = Vector{Ti}(undef, klu.nblocks + 1)
-        else
-            out = Vector{Ti}(undef, klu.n)
-        end
-        # This tuple construction feels hacky, there's a better way I'm sure.
-        s === :q && (s = :Q)
-        s === :p && (s = :P)
-        _extract!(klu; NamedTuple{(s,)}((out,))...)
-        if s ∈ (:Q, :P, :R)
-            increment!(out)
-        end
-        return out
     end
     if s ∈ (:L, :U, :F)
         if s === :L
@@ -466,6 +475,7 @@ function klu_analyze!(K::KLUFactorization{Tv, Ti}; check=true) where {Tv, Ti<:KL
             kluerror(K.common)
         else
             K._symbolic = sym
+            K._perms = nothing
         end
     end
     return K
@@ -492,6 +502,7 @@ function klu_analyze!(K::KLUFactorization{Tv, Ti}, P::Vector{Ti}, Q::Vector{Ti};
             kluerror(K.common)
         else
             K._symbolic = sym
+            K._perms = (copy(P), copy(Q))
         end
     end
     return K
@@ -834,12 +845,7 @@ function Base.deepcopy_internal(K::KLUFactorization{Tv, Ti}, stackdict::IdDict) 
         C.common.status = KLU_OK # klu_factor! refuses to proceed after an earlier failure
         C.common.memusage = C.common.mempeak = 0 # these count the libklu objects of `C` only
         if K._symbolic != C_NULL
-            symbolic = K.symbolic
-            if symbolic.ordering == 2 # analyzed with user-provided permutations
-                klu_analyze!(C, unsafe_wrap(Array, symbolic.P, K.n), unsafe_wrap(Array, symbolic.Q, K.n))
-            else
-                klu_analyze!(C)
-            end
+            K._perms === nothing ? klu_analyze!(C) : klu_analyze!(C, K._perms...)
         end
         if K._numeric != C_NULL
             klu_factor!(C; allowsingular = true)
