@@ -191,6 +191,18 @@ using LinearAlgebra
                 @test unsafe_wrap(Array, C.symbolic.P, 5) == P
                 @test unsafe_wrap(Array, C.symbolic.Q, 5) == Q
                 @test C \ b ≈ Ab
+                # The copy analyzes as K did, with BTF, and doesn't depend on the caller's vectors.
+                K = KLUFactorization(A)
+                klu_analyze!(K, P, Q)
+                klu_factor!(K)
+                P .= 0
+                C = dup(K)
+                @test (C.L, C.U, C.F, C.p, C.q) == (K.L, K.U, K.F, K.p, K.q)
+                # A later analysis without permutations replaces the earlier ones.
+                KLU._free_numeric(K)
+                K._symbolic = C_NULL
+                klu_analyze!(K)
+                @test dup(K).symbolic.ordering == K.symbolic.ordering != 2
             end
 
             @testset "Strided views as right-hand sides (issue #11)" begin
