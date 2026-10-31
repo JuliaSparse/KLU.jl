@@ -1,0 +1,4 @@
+# Generated code: the wrapper generator and the wrappers it writes.
+ignore:
+  - "gen"
+  - "src/wrappers.jl"
