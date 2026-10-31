@@ -6,6 +6,8 @@ using SparseArrays: SparseMatrixCSC, sparse, sprand, nnz, nonzeros
 using LinearAlgebra
 
 @testset "KLU Wrappers" begin
+    @test KLU.libklu === KLU.SuiteSparse_jll.libklu
+    @test KLU.SuiteSparse_config_malloc_func_get() != C_NULL
     Ap = increment!([0,4,1,1,2,2,0,1,2,3,4,4])
     Ai = increment!([0,4,0,2,1,2,1,4,3,2,1,2])
     Ax = [2.,1.,3.,4.,-1.,-3.,3.,6.,2.,1.,4.,2.]
