@@ -28,12 +28,12 @@ using LinearAlgebra
             R = Diagonal(Tv == ComplexF64 ? complex.(klua.Rs) : klua.Rs)
             @test R \ A[klua.p, klua.q] ≈ (klua.L * klua.U + klua.F)
 
-            b = [8., 45., -3., 3., 19.]
+            b = Tv[8., 45., -3., 3., 19.]
             x = klua \ b
             @test x ≈ float([1:5;])
             @test A*x ≈ b
 
-            z = complex.(b)
+            z = copy(b)
             x = ldiv!(klua, z)
             @test x ≈ float([1:5;])
             @test z === x
@@ -41,12 +41,12 @@ using LinearAlgebra
             # since klu_solve(<KLU>, <INPUT>) modifies <INPUT>, and has no field for <OUTPUT>.
             @test A*x ≈ b
 
-            b = [8., 20., 13., 6., 17.]
+            b = Tv[8., 20., 13., 6., 17.]
             x = klua'\b
             @test x ≈ float([1:5;])
 
             @test A'*x ≈ b
-            z = complex.(b)
+            z = copy(b)
             x = ldiv!(adjoint(klua), z)
             @test x ≈ float([1:5;])
             @test x === z
@@ -56,17 +56,16 @@ using LinearAlgebra
             @test x ≈ float([1:5;])
             @test transpose(A) * x ≈ b
 
-            x = ldiv!(transpose(klua), complex.(b))
+            x = ldiv!(transpose(klua), copy(b))
             @test x ≈ float([1:5;])
             @test transpose(A) * x ≈ b
 
-            @inferred klua\fill(1, size(A, 2))
+            @inferred klua\ones(Tv, size(A, 2))
 
             for (op, M) in ((identity, A), (adjoint, A'), (transpose, transpose(A)))
-                X = complex.(rand(5, 2))
+                X = rand(Tv, 5, 2)
                 @test M * ldiv!(op(klua), copy(X)) ≈ X
                 @test_throws DimensionMismatch ldiv!(op(klua), zeros(Tv, 6))
-                @test_throws DimensionMismatch ldiv!(op(klua), zeros(ComplexF64, 6))
             end
 
             @testset "Permutation vectors" begin
@@ -351,13 +350,11 @@ end
 end
 
 @testset "full_factor = false" begin
-    for T in (Float64, ComplexF64, Float32, ComplexF32)
+    for T in (Float64, ComplexF64)
         A = sparse(Matrix{T}([1 0; 1 1]))
         nonzeros(A) .= zero(T)
         F = klu(A; full_factor = false)
-        # we do need both here--for non 64 bit types, the nzval of F is not the same as A's.
-        nonzeros(A) .= one(T)
-        nonzeros(F) .= one(T)
+        nonzeros(A) .= one(T) # F shares these values
         klu_factor!(F)
         b = ones(T, 2)
         @test F\b ≈ A\b
@@ -559,7 +556,6 @@ end
     @test klu_factor!(K) \ b ≈ 2 * Ad \ b
     nonzeros(A) ./= 2
     @test nonzeros(KLUFactorization(A)) !== nonzeros(A)
-    @test nonzeros(klu(SparseMatrixCSC{Float32, Int}(A))) isa Vector{Float64}
 
     colptr, rowval, nzval = [0, 1, 2, 4], [0, 1, 0, 2], [1.0, 2.0, 0.0, 3.0]
     K = klu(3, colptr, rowval, nzval)
@@ -743,4 +739,72 @@ end
     @test sprint(show, MIME("text/plain"), K) ==
           "$(summary(K))\nL factor:\n$(sprint(show, MIME("text/plain"), K.L))\nU factor:\n$(sprint(show, MIME("text/plain"), K.U))\nF factor:\n$(sprint(show, MIME("text/plain"), K.F))"
     @test !islocked(K)
+end
+
+@testset "Only the types that libklu provides" begin
+    A = sparse([2.0 1.0; 0.0 2.0])
+    colptr, rowval = A.colptr .- 1, A.rowval .- 1
+    K, Z = klu(A), klu(complex(A))
+
+    # Values
+    for T in (Float16, Float32, BigFloat, Int, Int32, Rational{Int}, ComplexF32, Complex{Int}, Complex{BigFloat})
+        S = convert(SparseMatrixCSC{T, Int}, A)
+        v = nonzeros(S)
+        @test_throws MethodError klu(S)
+        @test_throws MethodError klu(2, colptr, rowval, v)
+        @test_throws MethodError KLUFactorization(S)
+        @test_throws MethodError KLUFactorization(2, colptr, rowval, v)
+        @test_throws MethodError klu!(K, S)
+        @test_throws MethodError klu!(Z, S)
+        @test_throws MethodError klu!(K, v)
+        @test_throws MethodError klu!(Z, v)
+    end
+    @test_throws MethodError klu(sparse([true false; false true]))
+    # A real and a complex factorization don't take each other's values.
+    @test_throws MethodError klu!(K, complex(A))
+    @test_throws MethodError klu!(K, complex(nonzeros(A)))
+    @test_throws MethodError klu!(Z, A)
+    @test_throws MethodError klu!(Z, nonzeros(A))
+
+    # Indices, including a mix of the two that are provided.
+    @test_throws MethodError klu(convert(SparseMatrixCSC{Float64, Int16}, A))
+    @test_throws MethodError klu(2, Int16.(colptr), Int16.(rowval), nonzeros(A))
+    @test_throws MethodError klu(2, Int32.(colptr), rowval, nonzeros(A))
+    @test_throws MethodError KLUFactorization(2, Int32.(colptr), rowval, nonzeros(A))
+    @test_throws MethodError klu!(K, convert(SparseMatrixCSC{Float64, Int32}, A))
+
+    # All four combinations are accepted.
+    b = [1.0, 2.0]
+    for Tv in (Float64, ComplexF64), Ti in Base.uniontypes(KLUITypes)
+        S = convert(SparseMatrixCSC{Tv, Ti}, A)
+        F = klu(S)
+        @test F isa KLUFactorization{Tv, Ti}
+        @test klu!(F, S) \ Tv.(b) ≈ Matrix(A) \ b
+        @test inv(F) ≈ inv(Matrix(A))
+    end
+
+    # Right-hand sides
+    @testset "Right-hand sides with $op" for (op, M) in ((identity, A), (adjoint, A'), (transpose, transpose(A)))
+        for (F, Tv, others) in ((K, Float64, (Float16, Float32, Int, ComplexF32, ComplexF64)),
+                                (Z, ComplexF64, (Float32, Float64, Int, ComplexF32, Complex{Int})))
+            for T in others, B in (ones(T, 2), ones(T, 2, 3))
+                @test_throws MethodError ldiv!(op(F), copy(B))
+                @test_throws MethodError solve!(op(F), copy(B))
+                @test_throws ArgumentError op(F) \ B
+                @test_throws ArgumentError ldiv!(copy(B), op(F), copy(B))
+                @test_throws ArgumentError ldiv!(ones(Tv, size(B)), op(F), B)
+                @test_throws ArgumentError ldiv!(similar(B), op(F), ones(Tv, size(B)))
+            end
+            for B in (ones(Tv, 2), ones(Tv, 2, 3))
+                @test M * (op(F) \ B) ≈ B
+                Y = similar(B)
+                @test ldiv!(Y, op(F), B) === Y
+                @test M * Y ≈ B
+                @test M * (op(F) \ view(B, :, axes(B)[2:end]...)) ≈ B
+            end
+            # Any array of the right element type can be given to `\`, which makes a copy.
+            V = view(Tv[1, 9, 2], [1, 3])
+            @test M * (op(F) \ V) ≈ V
+        end
+    end
 end

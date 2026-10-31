@@ -172,10 +172,9 @@ mutable struct KLUFactorization{Tv<:KLUTypes, Ti<:KLUITypes} <: AbstractKLUFacto
     const lock::ReentrantLock
     # The permutations given to `klu_analyze!`, if any, so that a copy can analyze with them.
     _perms::Union{Nothing, Tuple{Vector{Ti}, Vector{Ti}}}
-    function KLUFactorization(n, colptr, rowval, nzval, common = _common(eltype(colptr)))
+    function KLUFactorization(n, colptr::Vector{Ti}, rowval::Vector{Ti}, nzval::Vector{Tv}, common = _common(Ti)) where {Tv<:KLUTypes, Ti<:KLUITypes}
         _check_lengths(n, colptr, rowval, nzval)
-        Ti = eltype(colptr)
-        obj = new{eltype(nzval), Ti}(common, C_NULL, C_NULL, n, colptr, rowval, nzval, ReentrantLock(), nothing)
+        obj = new{Tv, Ti}(common, C_NULL, C_NULL, n, colptr, rowval, nzval, ReentrantLock(), nothing)
         # During normal operation an object being finalized is unreachable, so no other task
         # can be holding its lock or be inside a libklu call on it. (Any in-flight call keeps
         # the object rooted.) That does not hold at process exit, see `_EXITING`.
@@ -255,9 +254,8 @@ nnz(K::AbstractKLUFactorization) = Base.@lock K K.lnz + K.unz + K.nzoff
 
 The values of the matrix factored by `K`.
 
-!!! warning "nonzeros(K) may or may not point to nonzeros(A)"
-    After `K = klu(A)`, `nonzeros(K) === nonzeros(A)` if `A` has `Float64` or `ComplexF64` values,
-    so changing one changes the other. Other value types are converted to a new vector.
+!!! warning "nonzeros(K) points to nonzeros(A)"
+    After `K = klu(A)`, `nonzeros(K) === nonzeros(A)`, so changing one changes the other.
     See [`klu`](@ref) for what changing these values means for `K`.
 """
 nonzeros(K::AbstractKLUFactorization) = K.nzval
@@ -699,10 +697,9 @@ klu_factor!
 
 Compute the LU factorization of a sparse matrix `A` using KLU[^ACM907].
 
-For sparse `A` with real or complex element type, the return type of `K` is
-`KLUFactorization{Tv, Ti}`, with `Tv` = `Float64` or `ComplexF64`
-respectively and `Ti` is an integer type (`Int32` or `Int64`).
-
+The values must be `Float64` or `ComplexF64`, and the indices `Int32` or `Int64`, as these are the
+only combinations that the library provides. Anything else is a `MethodError`, so convert first,
+for example with `klu(Float64.(A))`. The return type of `K` is `KLUFactorization{Tv, Ti}`.
 
 The individual components of the factorization `K` can be accessed by indexing:
 
@@ -721,7 +718,8 @@ The relation between `K` and `A` is
 
 `K` further supports the following functions:
 
-- `\\`, `ldiv!`, and [`solve!`](@ref) to solve linear systems
+- `\\`, `ldiv!`, and [`solve!`](@ref) to solve linear systems, with right-hand sides of the same
+  element type as `K`
 - [`klu!`](@ref) to refactor with new values
 - [`rcond`](@ref), [`condest`](@ref), and [`rgrowth`](@ref) to check the quality of the factorization
 - `det`, `logabsdet`, and `logdet`
@@ -736,15 +734,12 @@ The relation between `K` and `A` is
   Useful for cases where only the sparse structure of `A` is known at time of construction.
 
 !!! note
-    `klu(A::SparseMatrixCSC)` uses the KLU[^ACM907] library that is part of
-    SuiteSparse. As this library only supports sparse matrices with `Float64` or
-    `ComplexF64` elements, `klu` converts other values to one of these, in a new vector.
+    `klu(A::SparseMatrixCSC)` uses the KLU[^ACM907] library that is part of SuiteSparse.
 
 !!! warning "`K` shares vectors with the caller"
     To avoid using more memory, `K` does not copy what it is given. `klu(A)` keeps `nonzeros(A)`,
-    `klu(n, colptr, rowval, nzval)` keeps all three vectors, and `klu!(K, nzval)` keeps `nzval`,
-    unless the values had to be converted. It is the caller's responsibility not to change
-    them in a way that breaks `K`:
+    `klu(n, colptr, rowval, nzval)` keeps all three vectors, and `klu!(K, nzval)` keeps `nzval`.
+    It is the caller's responsibility not to change them in a way that breaks `K`:
 
     - Changing values does not change the current factors, but later calls to
       [`klu_factor!`](@ref), [`condest`](@ref), [`rgrowth`](@ref), and `copy` read the new values.
@@ -769,25 +764,7 @@ function klu(n,
     check=true,
     allowsingular=false,
     full_factor=true,
-) where {Ti<:KLUITypes, Tv<:AbstractFloat}
-    if Tv != Float64
-        nzval = convert(Vector{Float64}, nzval)
-    end
-    K = KLUFactorization(n, colptr, rowval, nzval)
-    return full_factor ? klu_factor!(K; check, allowsingular) : klu_analyze!(K; check)
-end
-
-function klu(n,
-    colptr::Vector{Ti},
-    rowval::Vector{Ti},
-    nzval::Vector{Tv};
-    check=true,
-    allowsingular=false,
-    full_factor=true,
-) where {Ti<:KLUITypes, Tv<:Complex}
-    if Tv != ComplexF64
-        nzval = convert(Vector{ComplexF64}, nzval)
-    end
+) where {Ti<:KLUITypes, Tv<:KLUTypes}
     K = KLUFactorization(n, colptr, rowval, nzval)
     return full_factor ? klu_factor!(K; check, allowsingular) : klu_analyze!(K; check)
 end
@@ -796,7 +773,7 @@ function klu(A::SparseMatrixCSC{Tv, Ti};
     check=true,
     allowsingular=false,
     full_factor=true,
-) where {Tv<:Union{AbstractFloat, Complex}, Ti<:KLUITypes}
+) where {Tv<:KLUTypes, Ti<:KLUITypes}
     n = size(A, 1)
     n == size(A, 2) || throw(DimensionMismatch())
     return klu(n,
@@ -821,9 +798,9 @@ If this throws because the new values are singular, `K` has no numeric factoriza
 later `klu!` or [`klu_factor!`](@ref) succeeds. Solving with `K` in the meantime factors the
 singular values again, and so throws as well.
 
-For sparse `A` with real or complex element type, the return type of `K` is
-`KLUFactorization{Tv, Ti}`, with `Tv` = `Float64` or `ComplexF64`
-respectively and `Ti` is an integer type (`Int32` or `Int64`).
+`A` must have the same value and index types as `K`, and `nzval` the same value type. Anything else
+is a `MethodError`, so convert first. `K` keeps the vector it is given, see [`klu`](@ref) for what
+this means.
 
 See also: [`klu`](@ref)
 
@@ -833,14 +810,6 @@ See also: [`klu`](@ref)
   - `check::Bool`: If `true` (default) check for errors after the factorization. If `false` errors must be checked by the user with `klu.common.status`.
   - `allowsingular::Bool`: If `true` (default `false`) allow the factorization to proceed even if the matrix is singular. Note that this will allow for
     silent divide by zero errors in subsequent `solve!` or `ldiv!` calls if singularity is not checked by the user with `klu.common.status == KLU.KLU_SINGULAR`
-
-!!! note
-    `klu(A::SparseMatrixCSC)` uses the KLU[^ACM907] library that is part of
-    SuiteSparse. As this library only supports sparse matrices with `Float64` or
-    `ComplexF64` elements, `klu!` converts other values to one of these, in a new vector.
-    Otherwise `K` keeps the vector it is given, see [`klu`](@ref) for what this means.
-
-[^ACM907]: Davis, Timothy A., & Palamadai Natarajan, E. (2010). Algorithm 907: KLU, A Direct Sparse Solver for Circuit Simulation Problems. ACM Trans. Math. Softw., 37(3). doi:10.1145/1824801.1824814
 """
 klu!
 
@@ -868,14 +837,6 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
     end
 end
 
-function klu!(K::AbstractKLUFactorization{ComplexF64}, nzval::Vector{U}; check=true, allowsingular=false) where {U<:Complex}
-    return klu!(K, convert(Vector{ComplexF64}, nzval); check, allowsingular)
-end
-
-function klu!(K::AbstractKLUFactorization{Float64}, nzval::Vector{U}; check=true, allowsingular=false) where {U<:AbstractFloat}
-    return klu!(K, convert(Vector{Float64}, nzval); check, allowsingular)
-end
-
 # Compares without shifting the zero-based vector in place, as it may be shared with the
 # caller and with other factorizations, which could be inside libklu at the time.
 function _same_indices(zero_based::Vector, one_based::Vector)
@@ -883,7 +844,7 @@ function _same_indices(zero_based::Vector, one_based::Vector)
     return all(i -> zero_based[i] + 1 == one_based[i], eachindex(zero_based, one_based))
 end
 
-function klu!(K::KLUFactorization{U}, S::SparseMatrixCSC{U}; check=true, allowsingular=false) where {U}
+function klu!(K::KLUFactorization{Tv, Ti}, S::SparseMatrixCSC{Tv, Ti}; check=true, allowsingular=false) where {Tv, Ti}
     size(K) == size(S) || throw(ArgumentError("Sizes of K and S must match."))
     # what should happen here when check = false? This is not really a KLU error code.
     _same_indices(K.colptr, S.colptr) && _same_indices(K.rowval, S.rowval) ||
@@ -962,7 +923,8 @@ end
 """
     solve!(klu::Union{KLUFactorization, AdjointFactorization{Tv, KLUFactorization}, TransposeFactorization{Tv, KLUFactorization}}, B::StridedVecOrMat) -> B
 
-Solve the linear system `AX = B` or `A'X = B` using the matrix factorization `klu` and right-hand side `B`.
+Solve the linear system `AX = B` or `A'X = B` using the matrix factorization `klu` and right-hand side `B`,
+which must have the same element type as `klu`.
 
 This function overwrites `B` with the solution `X`, for a new solution vector `X` use `klu \\ B`.
 
@@ -1041,26 +1003,35 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
     end
 end
 
-function solve(klu, B; check=true)
-    X = copy(B)
-    return solve!(klu, X; check)
-end
-
 # we are not adding check to `ldiv!` since it is not in the contract.
 LinearAlgebra.ldiv!(klu::AbstractKLUFactorization{Tv}, B::StridedVecOrMat{Tv}) where {Tv<:KLUTypes} =
     solve!(klu, B)
 LinearAlgebra.ldiv!(klu::Union{AdjointFactorization{Tv, K},TransposeFactorization{Tv, K}}, B::StridedVecOrMat{Tv}) where {Tv, Ti, K<:AbstractKLUFactorization{Tv, Ti}} =
     solve!(klu, B)
-function LinearAlgebra.ldiv!(klu::AbstractKLUFactorization{<:AbstractFloat}, B::StridedVecOrMat{<:Complex})
-    imagX = solve(klu, imag(B))
-    realX = solve(klu, real(B))
-    map!(complex, B, realX, imagX)
+
+# A factorization, or one of the lazy wrappers that solve with it.
+const _KLUSolver{Tv} = Union{
+    AbstractKLUFactorization{Tv},
+    AdjointFactorization{Tv, <:AbstractKLUFactorization{Tv}},
+    TransposeFactorization{Tv, <:AbstractKLUFactorization{Tv}},
+}
+
+_rhs_error(::_KLUSolver{Tv}, ::Type{T}) where {Tv, T} = throw(ArgumentError(
+    "This factorization solves with right-hand sides of type $Tv, but got $T. Convert it first."))
+
+# The generic methods in LinearAlgebra convert the right-hand side, which libklu does not provide.
+(\)(K::_KLUSolver{Tv}, B::AbstractVecOrMat{Tv}) where {Tv} = ldiv!(K, copyto!(similar(B, Tv), B))
+(\)(K::_KLUSolver, B::AbstractVecOrMat{T}) where {T} = _rhs_error(K, T)
+# LinearAlgebra has more specific methods for real factorizations with complex arrays.
+for F in (:(AbstractKLUFactorization{T}),
+          :(AdjointFactorization{T, <:AbstractKLUFactorization{T}}),
+          :(TransposeFactorization{T, <:AbstractKLUFactorization{T}}))
+    @eval (\)(K::$F, B::VecOrMat{Complex{T}}) where {T<:LinearAlgebra.BlasReal} = _rhs_error(K, Complex{T})
 end
 
-function LinearAlgebra.ldiv!(klu::Union{AdjointFactorization{Tv, K},TransposeFactorization{Tv, K}}, B::StridedVecOrMat{<:Complex}) where {Tv<:AbstractFloat, Ti, K<:AbstractKLUFactorization{Tv, Ti}}
-    imagX = solve(klu, imag(B))
-    realX = solve(klu, real(B))
-    map!(complex, B, realX, imagX)
-end
+LinearAlgebra.ldiv!(Y::AbstractVector{Tv}, K::_KLUSolver{Tv}, B::AbstractVector{Tv}) where {Tv} = ldiv!(K, copyto!(Y, B))
+LinearAlgebra.ldiv!(Y::AbstractMatrix{Tv}, K::_KLUSolver{Tv}, B::AbstractMatrix{Tv}) where {Tv} = ldiv!(K, copyto!(Y, B))
+LinearAlgebra.ldiv!(Y::AbstractVector{S}, K::_KLUSolver, B::AbstractVector{T}) where {S, T} = _rhs_error(K, S === T ? T : Union{S, T})
+LinearAlgebra.ldiv!(Y::AbstractMatrix{S}, K::_KLUSolver, B::AbstractMatrix{T}) where {S, T} = _rhs_error(K, S === T ? T : Union{S, T})
 
 end

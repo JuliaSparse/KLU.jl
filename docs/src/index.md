@@ -38,6 +38,12 @@ julia> x = factor \ b
   10.688731342850245
 ```
 
+## Supported types
+
+KLU provides `Float64` and `ComplexF64` values with `Int32` and `Int64` indices, and nothing else is
+accepted. Right-hand sides must have the same element type as the factorization. Convert anything
+else first, for example with `klu(Float64.(A))` or `factor \ Float64.(b)`.
+
 ## Reusing a factorization
 
 If only the values of a matrix change, `klu!` refactors faster than `klu`. It reuses the
@@ -53,9 +59,9 @@ If `klu!` throws a `SingularException`, `factor` has no numeric factorization un
 `klu!` or `klu_factor!` succeeds, and solving with it throws as well.
 
 To avoid using more memory, `factor` shares the vectors it is given: after `klu(A)` or
-`klu!(factor, B)` with `Float64` or `ComplexF64` values, `nonzeros(factor)` is the vector of `A`
-or `B`. It is the caller's responsibility not to change them in a way that breaks `factor`, as
-described in the docstring of [`klu`](@ref).
+`klu!(factor, B)`, `nonzeros(factor)` is the vector of `A` or `B`. It is the caller's
+responsibility not to change them in a way that breaks `factor`, as described in the docstring of
+[`klu`](@ref).
 
 `klu(A; full_factor = false)` only analyzes the pattern of `A`, and `klu!` then computes the
 first numeric factorization. Use `copy(factor)` to get an independent factorization, for
