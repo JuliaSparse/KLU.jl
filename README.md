@@ -43,9 +43,13 @@ simultaneous solves (or a solve and a refactorization) on the **same** `KLUFacto
 would corrupt each other. KLU.jl therefore guards every libklu call with a lock stored
 in the factorization object: sharing one factorization between threads is safe, but those
 calls are serialized. Distinct factorizations share no state and run fully in parallel.
-To solve many right-hand sides against one matrix in parallel, batch them as the columns
-of a single `B` in one `solve!`/`ldiv!` call, or give each task its own `klu(A)`.
-The lock is reentrant and can be held by the user across a sequence of calls with
+
+To solve many right-hand sides against one matrix, batch them as the columns of a single
+`B` in one `solve!`/`ldiv!` call, which runs on one thread. To solve them in parallel, give
+each task its own `copy(F)` or `klu(A)`, each of which costs as much time and memory as a
+new factorization.
+
+To make a sequence of calls on a factorization `F` atomic, hold its reentrant lock with
 `Base.@lock F ...`.
 
 <!---[![](https://img.shields.io/badge/docs-stable-blue.svg)](https://USER_NAME.github.io/PACKAGE_NAME.jl/stable) --->
