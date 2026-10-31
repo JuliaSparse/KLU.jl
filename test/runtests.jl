@@ -6,6 +6,11 @@ using SparseArrays: SparseMatrixCSC, sparse, sprand, nnz, nonzeros
 using LinearAlgebra
 
 @testset "KLU Wrappers" begin
+    # All libraries come from the JLL, rather than from names found by the system.
+    for lib in (:libklu, :libamd, :libbtf, :libcolamd, :libsuitesparseconfig)
+        @test getfield(KLU, lib) === getfield(KLU.SuiteSparse_jll, lib)
+    end
+    @test KLU.SuiteSparse_config_malloc_func_get() != C_NULL
     Ap = increment!([0,4,1,1,2,2,0,1,2,3,4,4])
     Ai = increment!([0,4,0,2,1,2,1,4,3,2,1,2])
     Ax = [2.,1.,3.,4.,-1.,-3.,3.,6.,2.,1.,4.,2.]

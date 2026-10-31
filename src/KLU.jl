@@ -3,13 +3,13 @@ module KLU
 using SparseArrays
 using SparseArrays: SparseMatrixCSC
 import SparseArrays: nnz, nonzeros
+using SuiteSparse_jll
 
 export klu, klu!
 export klu_factor!, klu_refactor!, solve!
 export rcond, condest, rgrowth
 export nonzeros
 
-const libklu = :libklu
 include("wrappers.jl")
 
 import Base: (\), size, getproperty, setproperty!, propertynames, show
