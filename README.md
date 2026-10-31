@@ -48,6 +48,14 @@ julia> klu!(factor, B);          # B has the same pattern as A
 julia> klu!(factor, nonzeros(B)); # or just its values
 ```
 
+If `klu!` throws a `SingularException`, `factor` has no numeric factorization until a later
+`klu!` or `klu_factor!` succeeds, and solving with it throws as well.
+
+To avoid using more memory, `factor` shares the vectors it is given: after `klu(A)` or
+`klu!(factor, B)` with `Float64` or `ComplexF64` values, `nonzeros(factor)` is the vector of `A`
+or `B`. It is the caller's responsibility not to change them in a way that breaks `factor`, as
+described in the docstring of `klu`.
+
 `klu(A; full_factor = false)` only analyzes the pattern of `A`, and `klu!` then computes the
 first numeric factorization. Use `copy(factor)` to get an independent factorization, for
 example to refactor it without affecting the original. This costs as much as a new
@@ -56,7 +64,8 @@ factorization.
 ## Checking a factorization
 
 `rcond` is a cheap estimate of the reciprocal condition number, `condest` is a more accurate
-estimate of the 1-norm condition number, and `rgrowth` is the reciprocal pivot growth.
+estimate of the 1-norm condition number, and `rgrowth` is the reciprocal pivot growth. `det`,
+`logabsdet`, and `logdet` give the determinant of the factored matrix.
 
 ## Thread safety
 

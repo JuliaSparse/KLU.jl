@@ -2,7 +2,8 @@ using KLU
 using KLU: increment!, KLUITypes, decrement, klu!, KLUFactorization,
 klu_analyze!, klu_factor!, klu_refactor!
 using Test
-using SparseArrays: SparseMatrixCSC, sparse, sprand, nnz, nonzeros
+using Serialization
+using SparseArrays: SparseMatrixCSC, sparse, sprand, spzeros, dropzeros!, nnz, nonzeros
 using LinearAlgebra
 
 @testset "KLU Wrappers" begin
@@ -95,10 +96,10 @@ using LinearAlgebra
                 klu_factor!(K)
                 @test K.numeric.lnz == 7 == K.numeric.unz
                 @test K.nblocks == 3
-                @test propertynames(K) == (:lnz, :unz, :nzoff, :L, :U, :F, :q, :p, :Rs, :symbolic, :numeric,)
+                @test propertynames(K) == (:lnz, :unz, :nzoff, :L, :U, :F, :q, :p, :Rs,)
                 @test_throws ArgumentError size(K, -1)
                 @test K.R[[1, end]] == [1, 6] && length(K.R) == K.nblocks + 1
-                @test (:nblocks, :lock) ⊆ propertynames(K, true)
+                @test (:symbolic, :numeric, :nblocks, :lock) ⊆ propertynames(K, true)
                 R = convert(SparseMatrixCSC{Tv, Ti}, sparse(ones(2, 3)))
                 @test_throws DimensionMismatch klu(R)
                 @test_throws ArgumentError KLUFactorization(R)
@@ -113,7 +114,7 @@ using LinearAlgebra
                 @test klu!(F, B.nzval)\b ≈ B\b ≈ Matrix(B)\b #test just supplying nzval for recompute
                 @test klu_refactor!(F, A)\b ≈ Matrix(A)\b
 
-                # The pattern check temporarily shifts the indices of F, which must be undone.
+                # A rejected pattern leaves F usable.
                 P = copy(A)
                 P[findfirst(iszero, Matrix(A))] = one(Tv)
                 @test_throws ArgumentError klu!(F, P)
@@ -129,6 +130,26 @@ using LinearAlgebra
                 @test klu!(G, nonzeros(C)) \ ones(Tv, 2) ≈ Matrix(C) \ ones(Tv, 2)
                 @test !issuccess(klu!(G, singular; check = false))
                 @test issuccess(klu!(G, singular; allowsingular = true); allowsingular = true)
+                @test !issuccess(klu_refactor!(klu(C), singular; check = false))
+
+                # A refactorization that stops partway must not leave a mix of old and new factors.
+                G = klu(C)
+                @test_throws SingularException klu!(G, singular)
+                @test G._numeric == C_NULL
+                @test !issuccess(G)
+                @test_throws SingularException G \ ones(Tv, 2)
+                @test_throws SingularException rcond(G)
+                @test_throws SingularException condest(G)
+                @test !issuccess(G)
+                @test klu!(G, nonzeros(C)) \ ones(Tv, 2) ≈ Matrix(C) \ ones(Tv, 2)
+                @test issuccess(G)
+
+                # A failed klu_factor! must not leave the factors of the earlier values in use.
+                G = klu(copy(C))
+                nonzeros(G) .= one(Tv)
+                @test_throws SingularException klu_factor!(G)
+                @test !issuccess(G)
+                @test_throws SingularException G \ ones(Tv, 2)
             end
 
             @testset "Singular matrix" begin
@@ -320,8 +341,10 @@ end
 @testset "Later solvers do not switch the allocator" begin
     script = """
     using KLU, SparseArrays, LinearAlgebra
+    S = sparse([4.0 1.0; 1.0 3.0])
+    F = klu(S)
     before = KLU.SuiteSparse_config_malloc_func_get()
-    lu(sparse([4.0 1.0; 1.0 3.0]))
+    lu(S)
     KLU.SuiteSparse_config_malloc_func_get() == before || exit(1)
     """
     cmd = `$(Base.julia_cmd()) --startup-file=no --project=$(Base.active_project()) -e $script`
@@ -437,6 +460,30 @@ end
     end
 end
 
+@testset "Factorizations sharing pattern vectors" begin
+    n = 20_000
+    A = sparse(Tridiagonal(fill(-1.0, n - 1), fill(4.0, n), fill(-1.0, n - 1)))
+    colptr, rowval = A.colptr .- 1, A.rowval .- 1
+    K1 = klu(n, colptr, rowval, copy(nonzeros(A)))
+    K2 = klu(n, colptr, rowval, copy(nonzeros(A)))
+    @test K1.colptr === K2.colptr
+    # libklu would read out of bounds on K2 if refactoring K1 shifted the shared vectors.
+    stop = Threads.Atomic{Bool}(false)
+    shifted = Threads.Atomic{Bool}(false)
+    watcher = Threads.@spawn while !stop[]
+        colptr[1] == 0 || (shifted[] = true)
+        yield()
+    end
+    for _ in 1:50
+        klu!(K1, A)
+    end
+    stop[] = true
+    wait(watcher)
+    @test !shifted[]
+    b = ones(n)
+    @test A * (K2 \ b) ≈ b
+end
+
 @testset "klu_factor! on an already factored object releases the old factor" begin
     A = sparse([1, 2], [1, 2], [1.0, 2.0])
     F = klu(A)
@@ -491,5 +538,249 @@ end
         rgrowth(F) # libklu resets the status here
         @test F.common.status == KLU.KLU_SINGULAR
         @test !issuccess(F)
+        # All of these keep a status they did not set themselves, as libklu resets it.
+        F = klu(sparse(Tv[1 2; 0 1]))
+        F.common.status = KLU.KLU_SINGULAR
+        for op in (rcond, condest, rgrowth)
+            op(F)
+            @test F.common.status == KLU.KLU_SINGULAR
+        end
     end
+end
+
+@testset "A factorization shares the vectors it is given" begin
+    b = ones(3)
+    # An explicitly stored zero, so that dropzeros! shrinks the vectors of A.
+    A = sparse([1, 2, 3, 1], [1, 2, 3, 3], [1.0, 2.0, 3.0, 0.0])
+    Ad = Matrix(A)
+
+    K = klu(A; full_factor = false)
+    @test nonzeros(K) === nonzeros(A)
+    nonzeros(A) .*= 2
+    @test klu_factor!(K) \ b ≈ 2 * Ad \ b
+    nonzeros(A) ./= 2
+    @test nonzeros(KLUFactorization(A)) !== nonzeros(A)
+    @test nonzeros(klu(SparseMatrixCSC{Float32, Int}(A))) isa Vector{Float64}
+
+    colptr, rowval, nzval = [0, 1, 2, 4], [0, 1, 0, 2], [1.0, 2.0, 0.0, 3.0]
+    K = klu(3, colptr, rowval, nzval)
+    @test K.colptr === colptr && K.rowval === rowval && nonzeros(K) === nzval
+    v = 2 * nzval
+    @test klu!(K, v) \ b ≈ 2 * Ad \ b
+    @test nonzeros(K) === v
+    # Changing the values doesn't change the current factors.
+    v .*= 2
+    @test K \ b ≈ 2 * Ad \ b
+
+    # libklu would read past the end of a vector that the caller made too short.
+    A2 = copy(A)
+    K = klu(A2)
+    x = K \ b
+    full = copy(nonzeros(K))
+    dropzeros!(A2)
+    @test length(nonzeros(K)) < K.colptr[end]
+    for op in (klu_factor!, rgrowth, condest, copy)
+        @test_throws ArgumentError op(K)
+    end
+    @test_throws DimensionMismatch klu!(K, full)
+    @test K \ b ≈ x # the factors are unaffected
+    A2 = copy(A)
+    U = klu(A2; full_factor = false)
+    dropzeros!(A2)
+    @test_throws ArgumentError klu_factor!(U)
+    @test_throws ArgumentError U \ b
+    colptr, rowval = [0, 1, 2, 4], [0, 1, 0, 2]
+    U = KLUFactorization(3, colptr, rowval, [1.0, 2.0, 0.0, 3.0])
+    resize!(rowval, 2)
+    @test_throws ArgumentError klu_analyze!(U)
+    @test_throws ArgumentError klu_analyze!(U, [0, 1, 2], [0, 1, 2])
+end
+
+@testset "Fields that can't be reassigned" begin
+    A = sparse([2.0 1.0; 0.0 2.0])
+    K = klu(A)
+    for s in (:common, :n, :colptr, :rowval, :lock)
+        @test_throws ErrorException setproperty!(K, s, getfield(K, s))
+    end
+    @test K \ [1.0, 2.0] ≈ Matrix(A) \ [1.0, 2.0]
+end
+
+@testset "Empty matrices" begin
+    for f in (() -> klu(spzeros(0, 0)), () -> klu(spzeros(0, 0); check = false),
+              () -> KLUFactorization(spzeros(0, 0)), () -> klu(0, [0], Int[], Float64[]))
+        @test_throws "empty matrix" f()
+    end
+end
+
+@testset "Determinant, $Tv elements, $Ti indices" for Tv in (Float64, ComplexF64), Ti in Base.uniontypes(KLUITypes)
+    # Several blocks, nontrivial permutations, and off-diagonal entries in F.
+    A0 = sparse([1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 5, 1], [1, 3, 2, 5, 3, 1, 5, 4, 2, 5, 4, 2],
+                [2.0, 3.0, -1.0, 4.0, 5.0, 1.0, 7.0, -2.0, 1.0, 3.0, 6.0, 9.0])
+    @test klu(A0).nblocks > 1
+    for B in (A0, A0[[2, 1, 3, 4, 5], :], A0[:, [5, 4, 3, 2, 1]], A0[[3, 1, 2, 5, 4], [2, 1, 4, 3, 5]])
+        A = convert(SparseMatrixCSC{Tv, Ti}, B)
+        Tv <: Complex && (nonzeros(A) .*= cis.(1:nnz(A)))
+        Ad = Matrix(A)
+        F = klu(A)
+        ld, s = logabsdet(F)
+        ld0, s0 = logabsdet(Ad)
+        @test ld ≈ ld0
+        @test s ≈ s0
+        @test abs(s) ≈ 1
+        @test det(F) ≈ det(Ad)
+        @test det(F') ≈ det(Ad')
+        @test det(transpose(F)) ≈ det(transpose(Ad))
+        @test logabsdet(F')[2] ≈ conj(s0)
+        @test logabsdet(transpose(F))[2] ≈ s0
+        # With other scalings, which change Rs but not the determinant.
+        for scale in (0, 1, 2)
+            K = KLUFactorization(A)
+            K.common.scale = scale
+            @test det(klu_factor!(K)) ≈ det(Ad)
+        end
+        # A factorization which was not yet computed is computed on demand.
+        @test det(klu(A; full_factor = false)) ≈ det(Ad)
+        @test det(klu!(klu(A), nonzeros(2 * A))) ≈ 2^5 * det(Ad)
+    end
+    S = convert(SparseMatrixCSC{Tv, Ti}, sparse([1.0 2.0; 0.0 0.0]))
+    F = klu(S; allowsingular = true)
+    @test logabsdet(F) == (-Inf, 0)
+    @test det(F) == 0
+    @test F.common.status == KLU.KLU_SINGULAR
+    @test_throws SingularException det(klu(S; check = false, full_factor = false))
+    # A large determinant doesn't overflow in logabsdet.
+    L = convert(SparseMatrixCSC{Tv, Ti}, sparse(1:400, 1:400, fill(1e10, 400)))
+    @test logabsdet(klu(L))[1] ≈ 400 * log(1e10)
+end
+
+@testset "The column reported by SingularException" begin
+    # A status alone doesn't say which column.
+    @test_throws SingularException(0) KLU.kluerror(KLU.KLU_SINGULAR)
+    for Tv in (Float64, ComplexF64), Ti in Base.uniontypes(KLUITypes)
+        @test_throws SingularException(2) klu(convert(SparseMatrixCSC{Tv, Ti}, sparse([1.0 2.0; 0.0 0.0])))
+        @test_throws SingularException(3) klu(convert(SparseMatrixCSC{Tv, Ti}, sparse([1, 2], [1, 2], [1.0, 1.0], 3, 3)))
+        C = convert(SparseMatrixCSC{Tv, Ti}, sparse([1, 2, 1, 2], [1, 1, 2, 2], [1.0, 1.0, 1.0, 2.0]))
+        e = try klu!(klu(C), Tv[1, 1, 1, 1]) catch e; e end
+        @test e isa SingularException && e.info in 1:2
+    end
+end
+
+@testset "Failure paths and state changes" begin
+    A = sparse([2.0 1.0; 0.0 2.0])
+    b = [1.0, 2.0]
+    x = Matrix(A) \ b
+
+    # An earlier failure doesn't stop a retry, which a temporary lack of memory should allow.
+    K = klu(A)
+    K.common.status = KLU.KLU_OUT_OF_MEMORY
+    @test issuccess(klu_factor!(K))
+    @test K \ b ≈ x
+    K = klu(A; full_factor = false)
+    K.common.status = KLU.KLU_OUT_OF_MEMORY
+    @test issuccess(klu_factor!(K))
+    K = KLUFactorization(A)
+    K.common.status = KLU.KLU_OUT_OF_MEMORY
+    @test issuccess(klu_factor!(K))
+    # What libklu rejects is still rejected.
+    K = klu(2, [0, 5, 1], [0], [1.0]; check = false)
+    @test_throws ArgumentError klu_factor!(K)
+    @test K.common.status == KLU.KLU_INVALID
+
+    # check = false also applies to a factorization that a solve computes on demand.
+    for op in (identity, adjoint, transpose)
+        K = klu(2, [0, 5, 1], [0], [1.0]; check = false)
+        B = ones(2)
+        @test solve!(op(K), B; check = false) === B
+        @test K.common.status == KLU.KLU_INVALID
+        @test !issuccess(K)
+        @test_throws ArgumentError solve!(op(K), ones(2))
+        S = sparse([1.0 2.0; 0.0 0.0])
+        K = klu(S; full_factor = false)
+        @test solve!(op(K), ones(2); check = false) isa Vector{Float64}
+        @test K.common.status == KLU.KLU_SINGULAR
+        K = klu(S; full_factor = false)
+        @test_throws SingularException solve!(op(K), ones(2))
+    end
+
+    # Assigning the current pointer must not free it, which would leave it dangling.
+    K = klu(A)
+    K._numeric = K._numeric
+    K._symbolic = K._symbolic
+    @test K \ b ≈ x
+    # Numeric factors must not outlive the analysis they belong to.
+    K._symbolic = C_NULL
+    @test K._numeric == C_NULL
+    @test !issuccess(K)
+    @test K \ b ≈ x
+
+    # The permutations are the ones that were validated, not the caller's vectors.
+    P, Q = [1, 0], [0, 1]
+    K = klu_analyze!(KLUFactorization(A), P, Q)
+    @test K._perms[1] !== P && K._perms[2] !== Q
+    P .= 0
+    @test K._perms == ([1, 0], [0, 1])
+    @test copy(K) \ b ≈ x
+
+    # Column stride does not matter with a single row, as libklu never steps along a column.
+    F = klu(sparse([2.0;;]))
+    M = [1.0 2.0; 3.0 4.0]
+    @test ldiv!(F, view(M, 1, 1:1)) == [0.5]
+    @test M == [0.5 2.0; 3.0 4.0]
+
+    # Reading state takes the lock, so these wait for another task holding it.
+    K = klu(A)
+    for f in (issuccess, nnz, K -> sprint(show, MIME("text/plain"), K))
+        lock(K)
+        t = Threads.@spawn f(K)
+        sleep(0.05)
+        @test !istaskdone(t)
+        unlock(K)
+        wait(t)
+        @test !istaskfailed(t)
+    end
+
+    # Printing has all the factors from one factorization, without holding the lock while writing.
+    K = klu(A)
+    @test sprint(show, MIME("text/plain"), K) ==
+          "$(summary(K))\nL factor:\n$(sprint(show, MIME("text/plain"), K.L))\nU factor:\n$(sprint(show, MIME("text/plain"), K.U))\nF factor:\n$(sprint(show, MIME("text/plain"), K.F))"
+    @test !islocked(K)
+end
+
+@testset "Finalizers release the libklu objects" begin
+    A = sparse([2.0 1.0; 0.0 2.0])
+    b = [1.0, 2.0]
+    x = Matrix(A) \ b
+    for make in (() -> klu(A), () -> klu(A; full_factor = false), () -> klu_factor!(KLUFactorization(A)))
+        K = make()
+        @test K._symbolic != C_NULL
+        K \ b
+        @test K._numeric != C_NULL
+        finalize(K)
+        @test K._symbolic == C_NULL && K._numeric == C_NULL
+    end
+    # An object with nothing to release is fine, and can still be used afterwards.
+    K = KLUFactorization(A)
+    finalize(K)
+    @test K \ b ≈ x
+    # Analyzing again adds a finalizer call, which finds nothing left to free.
+    K = klu(A)
+    K._symbolic = C_NULL
+    @test K \ b ≈ x
+    finalize(K)
+    @test K._symbolic == C_NULL && K._numeric == C_NULL
+
+    # `deserialize` does not call the constructor, and libklu's objects are not serialized.
+    K = klu(A)
+    io = IOBuffer()
+    serialize(io, K)
+    seekstart(io)
+    D = deserialize(io)
+    @test D isa KLUFactorization{Float64, Int}
+    @test D._symbolic == C_NULL && D._numeric == C_NULL
+    @test D \ b ≈ x
+    @test D._symbolic != C_NULL && D._numeric != C_NULL
+    @test D._numeric != K._numeric
+    finalize(D)
+    @test D._symbolic == C_NULL && D._numeric == C_NULL
+    @test K \ b ≈ x
 end
