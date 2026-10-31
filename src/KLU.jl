@@ -167,6 +167,9 @@ mutable struct KLUFactorization{Tv<:KLUTypes, Ti<:KLUITypes} <: AbstractKLUFacto
     # The permutations given to `klu_analyze!`, if any, so that a copy can analyze with them.
     _perms::Union{Nothing, Tuple{Vector{Ti}, Vector{Ti}}}
     function KLUFactorization(n, colptr, rowval, nzval)
+        # libklu only sees pointers, so it would read past the end of vectors that are too short.
+        n >= 0 && length(colptr) == n + 1 && colptr[end] <= min(length(rowval), length(nzval)) ||
+            throw(ArgumentError("colptr must have length n + 1, and rowval and nzval at least colptr[end] entries."))
         Ti = eltype(colptr)
         common = _common(Ti)
         obj = new{eltype(nzval), Ti}(common, C_NULL, C_NULL, n, colptr, rowval, nzval, ReentrantLock(), nothing)

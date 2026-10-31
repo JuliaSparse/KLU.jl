@@ -283,6 +283,13 @@ end
     K = klu(2, [0, 5, 1], [0], [1.0]; check = false)
     @test K.common.status == KLU.KLU_INVALID
     @test !issuccess(K)
+    # Lengths that libklu can't check, whatever the value of check.
+    for (n, colptr, rowval, nzval) in ((2, [0, 1, 2], [0, 1], [1.0]), (2, [0, 1, 2], [0], [1.0, 1.0]),
+                                       (2, [0, 1], [0, 1], [1.0, 1.0]), (-1, Int[], Int[], Float64[]))
+        @test_throws ArgumentError klu(n, colptr, rowval, nzval)
+        @test_throws ArgumentError klu(n, colptr, rowval, nzval; check = false)
+    end
+    @test issuccess(klu(2, [0, 1, 2], [0, 1, 7], [1.0, 1.0, 9.0])) # extra entries are allowed
 end
 
 # Regression test for JuliaSparse/KLU.jl#31: at exit Julia runs all finalizers, including those
