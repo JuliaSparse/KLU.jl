@@ -2,7 +2,7 @@ using KLU
 using KLU: increment!, KLUITypes, decrement, klu!, KLUFactorization,
 klu_analyze!, klu_factor!, klu_refactor!
 using Test
-using SparseArrays: SparseMatrixCSC, sparse, sprand, nnz, nonzeros
+using SparseArrays: SparseMatrixCSC, sparse, sprand, spzeros, dropzeros!, nnz, nonzeros
 using LinearAlgebra
 
 @testset "KLU Wrappers" begin
@@ -113,7 +113,7 @@ using LinearAlgebra
                 @test klu!(F, B.nzval)\b ≈ B\b ≈ Matrix(B)\b #test just supplying nzval for recompute
                 @test klu_refactor!(F, A)\b ≈ Matrix(A)\b
 
-                # The pattern check temporarily shifts the indices of F, which must be undone.
+                # A rejected pattern leaves F usable.
                 P = copy(A)
                 P[findfirst(iszero, Matrix(A))] = one(Tv)
                 @test_throws ArgumentError klu!(F, P)
@@ -129,6 +129,26 @@ using LinearAlgebra
                 @test klu!(G, nonzeros(C)) \ ones(Tv, 2) ≈ Matrix(C) \ ones(Tv, 2)
                 @test !issuccess(klu!(G, singular; check = false))
                 @test issuccess(klu!(G, singular; allowsingular = true); allowsingular = true)
+                @test !issuccess(klu_refactor!(klu(C), singular; check = false))
+
+                # A refactorization that stops partway must not leave a mix of old and new factors.
+                G = klu(C)
+                @test_throws SingularException klu!(G, singular)
+                @test G._numeric == C_NULL
+                @test !issuccess(G)
+                @test_throws SingularException G \ ones(Tv, 2)
+                @test_throws SingularException rcond(G)
+                @test_throws SingularException condest(G)
+                @test !issuccess(G)
+                @test klu!(G, nonzeros(C)) \ ones(Tv, 2) ≈ Matrix(C) \ ones(Tv, 2)
+                @test issuccess(G)
+
+                # A failed klu_factor! must not leave the factors of the earlier values in use.
+                G = klu(copy(C))
+                nonzeros(G) .= one(Tv)
+                @test_throws SingularException klu_factor!(G)
+                @test !issuccess(G)
+                @test_throws SingularException G \ ones(Tv, 2)
             end
 
             @testset "Singular matrix" begin
@@ -240,7 +260,7 @@ using LinearAlgebra
     end
     @testset "deepcopy keeps aliasing within the copied object" begin
         A = copy(A0)
-        K = klu(A)
+        K = klu_factor!(KLUFactorization(size(A, 1), A.colptr .- 1, A.rowval .- 1, nonzeros(A)))
         K2, K3, A2 = deepcopy((K, K, A))
         @test K2 === K3
         @test nonzeros(K2) === nonzeros(A2) !== nonzeros(A)
@@ -320,8 +340,10 @@ end
 @testset "Later solvers do not switch the allocator" begin
     script = """
     using KLU, SparseArrays, LinearAlgebra
+    S = sparse([4.0 1.0; 1.0 3.0])
+    F = klu(S)
     before = KLU.SuiteSparse_config_malloc_func_get()
-    lu(sparse([4.0 1.0; 1.0 3.0]))
+    lu(S)
     KLU.SuiteSparse_config_malloc_func_get() == before || exit(1)
     """
     cmd = `$(Base.julia_cmd()) --startup-file=no --project=$(Base.active_project()) -e $script`
@@ -333,7 +355,7 @@ end
         A = sparse(Matrix{T}([1 0; 1 1]))
         nonzeros(A) .= zero(T)
         F = klu(A; full_factor = false)
-        # we do need both here--for non 64 bit types, the nzval of F is not the same as A's.
+        # we do need both here--the nzval of F is its own copy of A's.
         nonzeros(A) .= one(T)
         nonzeros(F) .= one(T)
         klu_factor!(F)
@@ -437,6 +459,30 @@ end
     end
 end
 
+@testset "Factorizations sharing pattern vectors" begin
+    n = 20_000
+    A = sparse(Tridiagonal(fill(-1.0, n - 1), fill(4.0, n), fill(-1.0, n - 1)))
+    colptr, rowval = A.colptr .- 1, A.rowval .- 1
+    K1 = klu_factor!(KLUFactorization(n, colptr, rowval, copy(nonzeros(A))))
+    K2 = klu_factor!(KLUFactorization(n, colptr, rowval, copy(nonzeros(A))))
+    @test K1.colptr === K2.colptr
+    # libklu would read out of bounds on K2 if refactoring K1 shifted the shared vectors.
+    stop = Threads.Atomic{Bool}(false)
+    shifted = Threads.Atomic{Bool}(false)
+    watcher = Threads.@spawn while !stop[]
+        colptr[1] == 0 || (shifted[] = true)
+        yield()
+    end
+    for _ in 1:50
+        klu!(K1, A)
+    end
+    stop[] = true
+    wait(watcher)
+    @test !shifted[]
+    b = ones(n)
+    @test A * (K2 \ b) ≈ b
+end
+
 @testset "klu_factor! on an already factored object releases the old factor" begin
     A = sparse([1, 2], [1, 2], [1.0, 2.0])
     F = klu(A)
@@ -491,5 +537,161 @@ end
         rgrowth(F) # libklu resets the status here
         @test F.common.status == KLU.KLU_SINGULAR
         @test !issuccess(F)
+        # All of these keep a status they did not set themselves, as libklu resets it.
+        F = klu(sparse(Tv[1 2; 0 1]))
+        F.common.status = KLU.KLU_SINGULAR
+        for op in (rcond, condest, rgrowth)
+            op(F)
+            @test F.common.status == KLU.KLU_SINGULAR
+        end
+    end
+end
+
+@testset "A factorization owns its vectors" begin
+    b = ones(3)
+    # An explicitly stored zero, so that dropzeros! shrinks the vectors of A.
+    A = sparse([1, 2, 3, 1], [1, 2, 3, 3], [1.0, 2.0, 3.0, 0.0])
+    Ad = Matrix(A)
+    K = klu(A; full_factor = false)
+    @test nonzeros(K) !== nonzeros(A)
+    dropzeros!(A)
+    @test length(nonzeros(K)) == 4
+    @test klu_factor!(K) \ b ≈ Ad \ b
+
+    colptr, rowval, nzval = [0, 1, 2, 4], [0, 1, 0, 2], [1.0, 2.0, 0.0, 3.0]
+    K = klu(3, colptr, rowval, nzval)
+    @test K.colptr !== colptr && K.rowval !== rowval && nonzeros(K) !== nzval
+    colptr .= 0
+    rowval .= 0
+    nzval .= 0
+    @test K \ b ≈ Ad \ b
+
+    v = [2.0, 4.0, 0.0, 6.0]
+    @test klu!(K, v) \ b ≈ 2 * Ad \ b
+    @test nonzeros(K) !== v
+    @test nonzeros(K) == v
+    v .= 0
+    @test condest(K) ≈ condest(klu(2 * sparse(Ad)))
+    # Refactoring with its own vector is allowed.
+    @test klu!(K, nonzeros(K)) \ b ≈ 2 * Ad \ b
+
+    # libklu would read past the end of a vector that was made too short.
+    K = klu(sparse(Ad))
+    x = K \ b
+    full = copy(nonzeros(K))
+    resize!(nonzeros(K), 2)
+    for op in (klu_factor!, rgrowth, condest, copy)
+        @test_throws ArgumentError op(K)
+    end
+    @test_throws DimensionMismatch klu!(K, full)
+    @test K \ b ≈ x # the factors are unaffected
+    U = klu(sparse(Ad); full_factor = false)
+    resize!(nonzeros(U), 2)
+    @test_throws ArgumentError klu_factor!(U)
+    @test_throws ArgumentError U \ b
+    U = KLUFactorization(sparse(Ad))
+    resize!(nonzeros(U), 2)
+    @test_throws ArgumentError klu_analyze!(U)
+    @test_throws ArgumentError klu_analyze!(U, [0, 1, 2], [0, 1, 2])
+
+    K = klu(sparse(Ad))
+    for s in (:common, :n, :colptr, :rowval, :nzval, :lock)
+        @test_throws ErrorException setproperty!(K, s, getfield(K, s))
+    end
+    @test K \ b ≈ x
+end
+
+@testset "Empty matrices" begin
+    for f in (() -> klu(spzeros(0, 0)), () -> klu(spzeros(0, 0); check = false),
+              () -> KLUFactorization(spzeros(0, 0)), () -> klu(0, [0], Int[], Float64[]))
+        @test_throws "empty matrix" f()
+    end
+end
+
+@testset "Element types" begin
+    b = [1.0, 2.0]
+    A = sparse([2.0 1.0; 0.0 2.0])
+    x = Matrix(A) \ b
+    for T in (Int, Int32, Rational{Int}, Float16, Float32, Float64)
+        S = convert(SparseMatrixCSC{T, Int}, A)
+        @test klu(S) isa KLUFactorization{Float64, Int}
+        @test klu(S) \ b ≈ x
+        @test klu(2, S.colptr .- 1, S.rowval .- 1, nonzeros(S)) \ b ≈ x
+        @test klu!(klu(2 * A), S) \ b ≈ x
+        @test klu!(klu(2 * A), nonzeros(S)) \ b ≈ x
+        @test klu!(klu(complex(2 * A)), S) \ b ≈ x
+    end
+    for T in (Complex{Int}, ComplexF32, ComplexF64)
+        S = convert(SparseMatrixCSC{T, Int}, A)
+        @test klu(S) isa KLUFactorization{ComplexF64, Int}
+        @test klu(S) \ b ≈ x
+        @test klu!(klu(complex(2 * A)), S) \ b ≈ x
+        @test klu!(klu(complex(2 * A)), nonzeros(S)) \ b ≈ x
+    end
+    @test klu(sparse([true false; false true])) \ b == b
+    # The values of a real factorization cannot become complex.
+    @test_throws MethodError klu!(klu(A), complex(A))
+    @test_throws MethodError klu!(klu(A), complex(nonzeros(A)))
+
+    @testset "ComplexF32 right-hand sides with $op" for (op, M) in
+            ((identity, A), (adjoint, A'), (transpose, transpose(A)))
+        for B in (ComplexF32[1 + 2im, 3 - 4im], ComplexF32[1 + 2im 5im; 3 - 4im 6])
+            X = copy(B)
+            @test ldiv!(op(klu(A)), X) === X
+            @test M * X ≈ B rtol = 1e-5
+        end
+    end
+end
+
+@testset "Determinant, $Tv elements, $Ti indices" for Tv in (Float64, ComplexF64), Ti in Base.uniontypes(KLUITypes)
+    # Several blocks, nontrivial permutations, and off-diagonal entries in F.
+    A0 = sparse([1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 5, 1], [1, 3, 2, 5, 3, 1, 5, 4, 2, 5, 4, 2],
+                [2.0, 3.0, -1.0, 4.0, 5.0, 1.0, 7.0, -2.0, 1.0, 3.0, 6.0, 9.0])
+    @test klu(A0).nblocks > 1
+    for B in (A0, A0[[2, 1, 3, 4, 5], :], A0[:, [5, 4, 3, 2, 1]], A0[[3, 1, 2, 5, 4], [2, 1, 4, 3, 5]])
+        A = convert(SparseMatrixCSC{Tv, Ti}, B)
+        Tv <: Complex && (nonzeros(A) .*= cis.(1:nnz(A)))
+        Ad = Matrix(A)
+        F = klu(A)
+        ld, s = logabsdet(F)
+        ld0, s0 = logabsdet(Ad)
+        @test ld ≈ ld0
+        @test s ≈ s0
+        @test abs(s) ≈ 1
+        @test det(F) ≈ det(Ad)
+        @test det(F') ≈ det(Ad')
+        @test det(transpose(F)) ≈ det(transpose(Ad))
+        @test logabsdet(F')[2] ≈ conj(s0)
+        @test logabsdet(transpose(F))[2] ≈ s0
+        # With other scalings, which change Rs but not the determinant.
+        for scale in (0, 1, 2)
+            K = KLUFactorization(A)
+            K.common.scale = scale
+            @test det(klu_factor!(K)) ≈ det(Ad)
+        end
+        # A factorization which was not yet computed is computed on demand.
+        @test det(klu(A; full_factor = false)) ≈ det(Ad)
+        @test det(klu!(klu(A), nonzeros(2 * A))) ≈ 2^5 * det(Ad)
+    end
+    S = convert(SparseMatrixCSC{Tv, Ti}, sparse([1.0 2.0; 0.0 0.0]))
+    F = klu(S; allowsingular = true)
+    @test logabsdet(F) == (-Inf, 0)
+    @test det(F) == 0
+    @test F.common.status == KLU.KLU_SINGULAR
+    @test_throws SingularException det(klu(S; check = false, full_factor = false))
+    # A large determinant doesn't overflow in logabsdet.
+    L = convert(SparseMatrixCSC{Tv, Ti}, sparse(1:400, 1:400, fill(1e10, 400)))
+    @test logabsdet(klu(L))[1] ≈ 400 * log(1e10)
+end
+
+@testset "The column reported by SingularException" begin
+    # A status alone doesn't say which column.
+    @test_throws SingularException(0) KLU.kluerror(KLU.KLU_SINGULAR)
+    for Tv in (Float64, ComplexF64), Ti in Base.uniontypes(KLUITypes)
+        @test_throws SingularException(2) klu(convert(SparseMatrixCSC{Tv, Ti}, sparse([1.0 2.0; 0.0 0.0])))
+        @test_throws SingularException(3) klu(convert(SparseMatrixCSC{Tv, Ti}, sparse([1, 2], [1, 2], [1.0, 1.0], 3, 3)))
+        C = convert(SparseMatrixCSC{Tv, Ti}, sparse([1, 2, 1, 2], [1, 1, 2, 2], [1.0, 1.0, 1.0, 2.0]))
+        e = try klu!(klu(C), Tv[1, 1, 1, 1]) catch e; e end
+        @test e isa SingularException && e.info in 1:2
     end
 end

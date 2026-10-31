@@ -1,7 +1,7 @@
 name = "KLU"
 uuid = "ef3ab10e-7fda-4108-b977-705223b18434"
 authors = ["Raye Kimmerer <kimmerer@mit.edu> and contributors"]
-version = "0.6.0"
+version = "0.7.0"
 
 [deps]
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
@@ -9,11 +9,11 @@ SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 SuiteSparse_jll = "bea87d4a-7f5b-5778-9afe-8cc45184846c"
 
 [compat]
-LinearAlgebra = "1.10"
+LinearAlgebra = "1.12"
 SuiteSparse_jll = "7.2"
 Test = "1.10"
-SparseArrays = "1.10"
-julia = "1.10"
+SparseArrays = "1.12"
+julia = "1.12"
 
 [extras]
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
