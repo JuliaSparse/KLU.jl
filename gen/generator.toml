@@ -1,5 +1,5 @@
 [general]
-library_names = {"SuiteSparse_config.h" = "libsuitesparseconfig", "klu.h" = "libklu", "amd.h" = "libamd", "btf.h" = "libbtf"}
+library_names = {"SuiteSparse_config.h" = "libsuitesparseconfig", "klu.h" = "libklu", "[/\\\\]amd.h" = "libamd", "colamd.h" = "libcolamd", "btf.h" = "libbtf"}
 
 use_julia_native_enum_type = true
 use_deterministic_symbol = true
@@ -48,6 +48,9 @@ output_ignorelist = [
     "SUITESPARSE_BLAS_DNRM2",
     "SUITESPARSE_BLAS_DZNRM2",
     "UMFPACK_VERSION",
+    # these would refer to a C function at load time
+    "SUITESPARSE_CONFIG_TIMER",
+    "SUITESPARSE_TIME",
 ]
 
 [codegen]

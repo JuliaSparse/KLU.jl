@@ -1,3 +1,7 @@
+function SuiteSparse_time()
+    ccall((:SuiteSparse_time, libsuitesparseconfig), Cdouble, ())
+end
+
 function SuiteSparse_config_printf_func_get()
     ccall((:SuiteSparse_config_printf_func_get, libsuitesparseconfig), Ptr{Cvoid}, ())
 end
@@ -110,10 +114,6 @@ function SuiteSparse_toc(tic)
     ccall((:SuiteSparse_toc, libsuitesparseconfig), Cdouble, (Ptr{Cdouble},), tic)
 end
 
-function SuiteSparse_time()
-    ccall((:SuiteSparse_time, libsuitesparseconfig), Cdouble, ())
-end
-
 function SuiteSparse_hypot(x, y)
     ccall((:SuiteSparse_hypot, libsuitesparseconfig), Cdouble, (Cdouble, Cdouble), x, y)
 end
@@ -182,52 +182,60 @@ function amd_l_info(Info)
     ccall((:amd_l_info, libamd), Cvoid, (Ptr{Cdouble},), Info)
 end
 
+function amd_version(version)
+    ccall((:amd_version, libamd), Cvoid, (Ptr{Cint},), version)
+end
+
 function colamd_recommended(nnz, n_row, n_col)
-    ccall((:colamd_recommended, libamd), Csize_t, (Int32, Int32, Int32), nnz, n_row, n_col)
+    ccall((:colamd_recommended, libcolamd), Csize_t, (Int32, Int32, Int32), nnz, n_row, n_col)
 end
 
 function colamd_l_recommended(nnz, n_row, n_col)
-    ccall((:colamd_l_recommended, libamd), Csize_t, (Int64, Int64, Int64), nnz, n_row, n_col)
+    ccall((:colamd_l_recommended, libcolamd), Csize_t, (Int64, Int64, Int64), nnz, n_row, n_col)
 end
 
 function colamd_set_defaults(knobs)
-    ccall((:colamd_set_defaults, libamd), Cvoid, (Ptr{Cdouble},), knobs)
+    ccall((:colamd_set_defaults, libcolamd), Cvoid, (Ptr{Cdouble},), knobs)
 end
 
 function colamd_l_set_defaults(knobs)
-    ccall((:colamd_l_set_defaults, libamd), Cvoid, (Ptr{Cdouble},), knobs)
+    ccall((:colamd_l_set_defaults, libcolamd), Cvoid, (Ptr{Cdouble},), knobs)
 end
 
 function colamd(n_row, n_col, Alen, A, p, knobs, stats)
-    ccall((:colamd, libamd), Cint, (Int32, Int32, Int32, Ptr{Int32}, Ptr{Int32}, Ptr{Cdouble}, Ptr{Int32}), n_row, n_col, Alen, A, p, knobs, stats)
+    ccall((:colamd, libcolamd), Cint, (Int32, Int32, Int32, Ptr{Int32}, Ptr{Int32}, Ptr{Cdouble}, Ptr{Int32}), n_row, n_col, Alen, A, p, knobs, stats)
 end
 
 function colamd_l(n_row, n_col, Alen, A, p, knobs, stats)
-    ccall((:colamd_l, libamd), Cint, (Int64, Int64, Int64, Ptr{Int64}, Ptr{Int64}, Ptr{Cdouble}, Ptr{Int64}), n_row, n_col, Alen, A, p, knobs, stats)
+    ccall((:colamd_l, libcolamd), Cint, (Int64, Int64, Int64, Ptr{Int64}, Ptr{Int64}, Ptr{Cdouble}, Ptr{Int64}), n_row, n_col, Alen, A, p, knobs, stats)
 end
 
 function symamd(n, A, p, perm, knobs, stats, allocate, release)
-    ccall((:symamd, libamd), Cint, (Int32, Ptr{Int32}, Ptr{Int32}, Ptr{Int32}, Ptr{Cdouble}, Ptr{Int32}, Ptr{Cvoid}, Ptr{Cvoid}), n, A, p, perm, knobs, stats, allocate, release)
+    ccall((:symamd, libcolamd), Cint, (Int32, Ptr{Int32}, Ptr{Int32}, Ptr{Int32}, Ptr{Cdouble}, Ptr{Int32}, Ptr{Cvoid}, Ptr{Cvoid}), n, A, p, perm, knobs, stats, allocate, release)
 end
 
 function symamd_l(n, A, p, perm, knobs, stats, allocate, release)
-    ccall((:symamd_l, libamd), Cint, (Int64, Ptr{Int64}, Ptr{Int64}, Ptr{Int64}, Ptr{Cdouble}, Ptr{Int64}, Ptr{Cvoid}, Ptr{Cvoid}), n, A, p, perm, knobs, stats, allocate, release)
+    ccall((:symamd_l, libcolamd), Cint, (Int64, Ptr{Int64}, Ptr{Int64}, Ptr{Int64}, Ptr{Cdouble}, Ptr{Int64}, Ptr{Cvoid}, Ptr{Cvoid}), n, A, p, perm, knobs, stats, allocate, release)
 end
 
 function colamd_report(stats)
-    ccall((:colamd_report, libamd), Cvoid, (Ptr{Int32},), stats)
+    ccall((:colamd_report, libcolamd), Cvoid, (Ptr{Int32},), stats)
 end
 
 function colamd_l_report(stats)
-    ccall((:colamd_l_report, libamd), Cvoid, (Ptr{Int64},), stats)
+    ccall((:colamd_l_report, libcolamd), Cvoid, (Ptr{Int64},), stats)
 end
 
 function symamd_report(stats)
-    ccall((:symamd_report, libamd), Cvoid, (Ptr{Int32},), stats)
+    ccall((:symamd_report, libcolamd), Cvoid, (Ptr{Int32},), stats)
 end
 
 function symamd_l_report(stats)
-    ccall((:symamd_l_report, libamd), Cvoid, (Ptr{Int64},), stats)
+    ccall((:symamd_l_report, libcolamd), Cvoid, (Ptr{Int64},), stats)
+end
+
+function colamd_version(version)
+    ccall((:colamd_version, libcolamd), Cvoid, (Ptr{Cint},), version)
 end
 
 function btf_maxtrans(nrow, ncol, Ap, Ai, maxwork, work, Match, Work)
@@ -254,7 +262,11 @@ function btf_l_order(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10
     ccall((:btf_l_order, libbtf), Int64, (Int64, Ptr{Int64}, Ptr{Int64}, Cdouble, Ptr{Cdouble}, Ptr{Int64}, Ptr{Int64}, Ptr{Int64}, Ptr{Int64}, Ptr{Int64}), arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10)
 end
 
-mutable struct klu_symbolic
+function btf_version(version)
+    ccall((:btf_version, libbtf), Cvoid, (Ptr{Cint},), version)
+end
+
+struct klu_symbolic
     symmetry::Cdouble
     est_flops::Cdouble
     lnz::Cdouble
@@ -271,10 +283,9 @@ mutable struct klu_symbolic
     ordering::Int32
     do_btf::Int32
     structural_rank::Int32
-    klu_symbolic() = new()
 end
 
-mutable struct klu_l_symbolic
+struct klu_l_symbolic
     symmetry::Cdouble
     est_flops::Cdouble
     lnz::Cdouble
@@ -291,10 +302,9 @@ mutable struct klu_l_symbolic
     ordering::Int64
     do_btf::Int64
     structural_rank::Int64
-    klu_l_symbolic() = new()
 end
 
-mutable struct klu_numeric
+struct klu_numeric
     n::Int32
     nblocks::Int32
     lnz::Int32
@@ -319,10 +329,9 @@ mutable struct klu_numeric
     Offi::Ptr{Int32}
     Offx::Ptr{Cvoid}
     nzoff::Int32
-    klu_numeric() = new()
 end
 
-mutable struct klu_l_numeric
+struct klu_l_numeric
     n::Int64
     nblocks::Int64
     lnz::Int64
@@ -347,7 +356,6 @@ mutable struct klu_l_numeric
     Offi::Ptr{Int64}
     Offx::Ptr{Cvoid}
     nzoff::Int64
-    klu_l_numeric() = new()
 end
 
 mutable struct klu_common_struct
@@ -658,6 +666,10 @@ function klu_l_realloc(arg1, arg2, arg3, arg4, arg5)
     ccall((:klu_l_realloc, libklu), Ptr{Cvoid}, (Csize_t, Csize_t, Csize_t, Ptr{Cvoid}, Ptr{klu_l_common}), arg1, arg2, arg3, arg4, arg5)
 end
 
+function klu_version(version)
+    ccall((:klu_version, libklu), Cvoid, (Ptr{Cint},), version)
+end
+
 const SUITESPARSE_OPENMP_MAX_THREADS = 1
 
 const SUITESPARSE_OPENMP_GET_NUM_THREADS = 1
@@ -680,17 +692,21 @@ const SUITESPARSE_COMPILER_MSC = 0
 
 const SUITESPARSE_COMPILER_XLC = 0
 
-const SUITESPARSE_DATE = "Oct 7, 2023"
+const SUITESPARSE_DATE = "Mar 6, 2025"
 
 const SUITESPARSE_MAIN_VERSION = 7
 
-const SUITESPARSE_SUB_VERSION = 2
+const SUITESPARSE_SUB_VERSION = 10
 
 const SUITESPARSE_SUBSUB_VERSION = 1
 
 SUITESPARSE_VER_CODE(main, sub) = main * 1000 + sub
 
-const SUITESPARSE_VERSION = SUITESPARSE_VER_CODE(SUITESPARSE_MAIN_VERSION, SUITESPARSE_SUB_VERSION)
+const SUITESPARSE_VERSION = SUITESPARSE_VER_CODE(7, 10)
+
+SUITESPARSE__VERCODE(main, sub, patch) = (main * Culonglong(1000) + sub) * Culonglong(1000) + patch
+
+const SUITESPARSE__VERSION = SUITESPARSE__VERCODE(7, 10, 1)
 
 const AMD_CONTROL = 5
 
@@ -740,29 +756,33 @@ const AMD_INVALID = -2
 
 const AMD_OK_BUT_JUMBLED = 1
 
-const AMD_DATE = "Sept 18, 2023"
+const AMD_DATE = "June 20, 2024"
 
 const AMD_MAIN_VERSION = 3
 
-const AMD_SUB_VERSION = 2
+const AMD_SUB_VERSION = 3
 
-const AMD_SUBSUB_VERSION = 1
+const AMD_SUBSUB_VERSION = 3
 
-AMD_VERSION_CODE(main, sub) = main * 1000 + sub
+AMD_VERSION_CODE(main, sub) = SUITESPARSE_VER_CODE(main, sub)
 
-const AMD_VERSION = AMD_VERSION_CODE(AMD_MAIN_VERSION, AMD_SUB_VERSION)
+const AMD_VERSION = AMD_VERSION_CODE(3, 3)
 
-const COLAMD_DATE = "Sept 18, 2023"
+const AMD__VERSION = SUITESPARSE__VERCODE(3, 3, 3)
+
+const COLAMD_DATE = "June 20, 2024"
 
 const COLAMD_MAIN_VERSION = 3
 
-const COLAMD_SUB_VERSION = 2
+const COLAMD_SUB_VERSION = 3
 
-const COLAMD_SUBSUB_VERSION = 1
+const COLAMD_SUBSUB_VERSION = 4
 
-COLAMD_VERSION_CODE(main, sub) = main * 1000 + sub
+COLAMD_VERSION_CODE(main, sub) = SUITESPARSE_VER_CODE(main, sub)
 
-const COLAMD_VERSION = COLAMD_VERSION_CODE(COLAMD_MAIN_VERSION, COLAMD_SUB_VERSION)
+const COLAMD_VERSION = COLAMD_VERSION_CODE(3, 3)
+
+const COLAMD__VERSION = SUITESPARSE__VERCODE(3, 3, 4)
 
 const COLAMD_KNOBS = 20
 
@@ -810,17 +830,19 @@ const COLAMD_ERROR_out_of_memory = -10
 
 const COLAMD_ERROR_internal_error = -999
 
-const BTF_DATE = "Sept 18, 2023"
+const BTF_DATE = "Mar 22, 2024"
 
 const BTF_MAIN_VERSION = 2
 
-const BTF_SUB_VERSION = 2
+const BTF_SUB_VERSION = 3
 
-const BTF_SUBSUB_VERSION = 1
+const BTF_SUBSUB_VERSION = 2
 
-BTF_VERSION_CODE(main, sub) = main * 1000 + sub
+BTF_VERSION_CODE(main, sub) = SUITESPARSE_VER_CODE(main, sub)
 
-const BTF_VERSION = BTF_VERSION_CODE(BTF_MAIN_VERSION, BTF_SUB_VERSION)
+const BTF_VERSION = BTF_VERSION_CODE(2, 3)
+
+const BTF__VERSION = SUITESPARSE__VERCODE(2, 3, 2)
 
 const KLU_OK = 0
 
@@ -832,15 +854,17 @@ const KLU_INVALID = -3
 
 const KLU_TOO_LARGE = -4
 
-const KLU_DATE = "Sept 18, 2023"
+const KLU_DATE = "Oct 10, 2024"
 
 const KLU_MAIN_VERSION = 2
 
-const KLU_SUB_VERSION = 2
+const KLU_SUB_VERSION = 3
 
-const KLU_SUBSUB_VERSION = 1
+const KLU_SUBSUB_VERSION = 5
 
-KLU_VERSION_CODE(main, sub) = main * 1000 + sub
+KLU_VERSION_CODE(main, sub) = SUITESPARSE_VER_CODE(main, sub)
 
-const KLU_VERSION = KLU_VERSION_CODE(KLU_MAIN_VERSION, KLU_SUB_VERSION)
+const KLU_VERSION = KLU_VERSION_CODE(2, 3)
+
+const KLU__VERSION = SUITESPARSE__VERCODE(2, 3, 5)
 
