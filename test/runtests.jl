@@ -297,6 +297,18 @@ end
     @test success(pipeline(cmd; stdout = devnull))
 end
 
+# Freeing libc-allocated factors through `jl_free` after this switch makes GC very slow.
+@testset "Later solvers do not switch the allocator" begin
+    script = """
+    using KLU, SparseArrays, LinearAlgebra
+    before = KLU.SuiteSparse_config_malloc_func_get()
+    lu(sparse([4.0 1.0; 1.0 3.0]))
+    KLU.SuiteSparse_config_malloc_func_get() == before || exit(1)
+    """
+    cmd = `$(Base.julia_cmd()) --startup-file=no --project=$(Base.active_project()) -e $script`
+    @test success(pipeline(cmd; stdout = devnull))
+end
+
 @testset "full_factor = false" begin
     for T in (Float64, ComplexF64, Float32, ComplexF32)
         A = sparse(Matrix{T}([1 0; 1 1]))

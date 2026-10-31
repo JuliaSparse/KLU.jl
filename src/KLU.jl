@@ -117,7 +117,16 @@ abstract type AbstractKLUFactorization{Tv, Ti} <: LinearAlgebra.Factorization{Tv
 # threads, so freeing factors then crashes in-flight solves. `atexit` hooks run before this
 # finalizer pass, so use one to leave that memory to the OS.
 const _EXITING = Threads.Atomic{Bool}(false)
-__init__() = (atexit(() -> (_EXITING[] = true; nothing)); nothing)
+function __init__()
+    atexit(() -> (_EXITING[] = true; nothing))
+    # SparseArrays requires this before any use of libklu. Otherwise its solvers switch the
+    # allocator on first use, and memory from libc's malloc is then freed through `jl_free`.
+    # Julia before 1.12 does this when SparseArrays loads.
+    @static if isdefined(SparseArrays.LibSuiteSparse, :init_suitesparse)
+        SparseArrays.LibSuiteSparse.init_suitesparse()
+    end
+    return
+end
 
 
 """
