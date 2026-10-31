@@ -407,15 +407,26 @@ end
         end
         @test !islocked(F)
     end
-    # Independent factorizations on different threads share nothing.
-    @sync for _ in 1:8
-        Threads.@spawn begin
-            F = klu(A)
-            b = rand(n)
-            for _ in 1:20
-                @test norm(A * (F \ b) - b) / norm(b) < 1e-10
+    # Independent factorizations on different threads share nothing, see issue #31.
+    for Tv in (Float64, ComplexF64), Ti in Base.uniontypes(KLUITypes)
+        As = convert(SparseMatrixCSC{Tv, Ti}, A)
+        residuals = zeros(4 * max(Threads.nthreads(), 2))
+        @sync for t in eachindex(residuals)
+            Threads.@spawn begin
+                worst = 0.0
+                b = rand(Tv, n)
+                for i in 1:20
+                    F = klu(As)
+                    worst = max(worst, norm(As * (F \ b) - b) / norm(b))
+                    klu!(F, As)
+                    worst = max(worst, norm(As' * (F' \ b) - b) / norm(b))
+                    # exercise the finalizers while other tasks are inside libklu
+                    i % 5 == 0 && GC.gc(false)
+                end
+                residuals[t] = worst
             end
         end
+        @test all(residuals .< 1e-10)
     end
 end
 

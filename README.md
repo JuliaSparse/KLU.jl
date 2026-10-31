@@ -36,6 +36,28 @@ julia> x = factor \ b
   -5.46661465074706
   10.688731342850245
 ```
+
+## Reusing a factorization
+
+If only the values of a matrix change, `klu!` refactors faster than `klu`. It reuses the
+pivot order, and throws an `ArgumentError` if the pattern is different.
+
+```julia
+julia> klu!(factor, B);          # B has the same pattern as A
+
+julia> klu!(factor, nonzeros(B)); # or just its values
+```
+
+`klu(A; full_factor = false)` only analyzes the pattern of `A`, and `klu!` then computes the
+first numeric factorization. Use `copy(factor)` to get an independent factorization, for
+example to refactor it without affecting the original. This costs as much as a new
+factorization.
+
+## Checking a factorization
+
+`rcond` is a cheap estimate of the reciprocal condition number, `condest` is a more accurate
+estimate of the 1-norm condition number, and `rgrowth` is the reciprocal pivot growth.
+
 ## Thread safety
 
 KLU's C library keeps scratch workspace *inside* each numeric factorization, so two
@@ -43,9 +65,13 @@ simultaneous solves (or a solve and a refactorization) on the **same** `KLUFacto
 would corrupt each other. KLU.jl therefore guards every libklu call with a lock stored
 in the factorization object: sharing one factorization between threads is safe, but those
 calls are serialized. Distinct factorizations share no state and run fully in parallel.
-To solve many right-hand sides against one matrix in parallel, batch them as the columns
-of a single `B` in one `solve!`/`ldiv!` call, or give each task its own `klu(A)`.
-The lock is reentrant and can be held by the user across a sequence of calls with
+
+To solve many right-hand sides against one matrix, batch them as the columns of a single
+`B` in one `solve!`/`ldiv!` call, which runs on one thread. To solve them in parallel, give
+each task its own `copy(F)` or `klu(A)`, each of which costs as much time and memory as a
+new factorization.
+
+To make a sequence of calls on a factorization `F` atomic, hold its reentrant lock with
 `Base.@lock F ...`.
 
 <!---[![](https://img.shields.io/badge/docs-stable-blue.svg)](https://USER_NAME.github.io/PACKAGE_NAME.jl/stable) --->

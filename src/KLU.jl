@@ -674,9 +674,9 @@ The relation between `K` and `A` is
 !!! note "Thread safety"
     A single `KLUFactorization` may be shared between tasks/threads: every libklu call on
     it is serialized by a per-object lock (see [`KLUFactorization`](@ref)). Solves on
-    *distinct* factorizations run fully in parallel. To solve many right-hand sides
-    concurrently against the same matrix, either batch them into the columns of one `B`
-    (a single `solve!` call) or give each task its own factorization.
+    *distinct* factorizations run fully in parallel. To solve many right-hand sides against
+    the same matrix, batch them into the columns of one `B` (a single `solve!` call, which
+    runs on one thread), or to solve them in parallel, give each task its own `copy(K)`.
 
 [^ACM907]: Davis, Timothy A., & Palamadai Natarajan, E. (2010). Algorithm 907: KLU, A Direct Sparse Solver for Circuit Simulation Problems. ACM Trans. Math. Softw., 37(3). doi:10.1145/1824801.1824814
 """
@@ -909,7 +909,7 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
             Base.@lock klu begin
                 klu._numeric == C_NULL && klu_factor!(klu)
                 status = klu.common.status
-                isok =$solve_name(klu._symbolic, klu._numeric, ldim, size(B, 2), B, Ref(klu.common))
+                isok = $solve_name(klu._symbolic, klu._numeric, ldim, size(B, 2), B, Ref(klu.common))
                 isok == 0 ? (check && kluerror(klu.common)) : (klu.common.status = status)
             end
             return B
@@ -933,7 +933,7 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
             Base.@lock klu begin
                 klu._numeric == C_NULL && klu_factor!(klu)
                 status = klu.common.status
-                isok =$call
+                isok = $call
                 isok == 0 ? (check && kluerror(klu.common)) : (klu.common.status = status)
             end
             return B
@@ -946,7 +946,7 @@ for Tv ∈ KLUValueTypes, Ti ∈ KLUIndexTypes
             Base.@lock klu begin
                 klu._numeric == C_NULL && klu_factor!(klu)
                 status = klu.common.status
-                isok =$call
+                isok = $call
                 isok == 0 ? (check && kluerror(klu.common)) : (klu.common.status = status)
             end
             return B
