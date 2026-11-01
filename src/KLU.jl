@@ -6,7 +6,7 @@ import SparseArrays: nnz, nonzeros
 using SuiteSparse_jll
 
 export klu, klu!
-export klu_factor!, klu_refactor!, solve!
+export klu_factor!, klu_refactor!
 export rcond, condest, rgrowth
 export nonzeros
 
@@ -725,7 +725,7 @@ The relation between `K` and `A` is
 
 `K` further supports the following functions:
 
-- `\\`, `ldiv!`, and [`solve!`](@ref) to solve linear systems
+- `\\`, `ldiv!`, and [`KLU.solve!`](@ref) to solve linear systems
 - [`klu!`](@ref) to refactor with new values
 - [`rcond`](@ref), [`condest`](@ref), and [`rgrowth`](@ref) to check the quality of the factorization
 - `det`, `logabsdet`, and `logdet`
@@ -964,7 +964,7 @@ end
 # with check=false it *is technically* possible to enter a seriously invalid state wherein `klu.common`
 # is undefined. I don't think this is possible in practice though, since we throw on invalid `common` on construction.
 """
-    solve!(klu::Union{KLUFactorization, AdjointFactorization{Tv, KLUFactorization}, TransposeFactorization{Tv, KLUFactorization}}, B::StridedVecOrMat) -> B
+    KLU.solve!(klu::Union{KLUFactorization, AdjointFactorization{Tv, KLUFactorization}, TransposeFactorization{Tv, KLUFactorization}}, B::StridedVecOrMat) -> B
 
 Solve the linear system `AX = B` or `A'X = B` using the matrix factorization `klu` and right-hand side `B`.
 
