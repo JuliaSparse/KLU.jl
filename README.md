@@ -1,8 +1,9 @@
 # KLU
 [![](https://img.shields.io/badge/docs-dev-blue.svg)](https://klu.juliasparse.org/)
 
-A linear solver for sparse circuit simulation problems.
-This package wraps the [SuiteSparse](https://github.com/DrTimothyAldenDavis/SuiteSparse) solver KLU.
+This package wraps the [SuiteSparse](https://github.com/DrTimothyAldenDavis/SuiteSparse) solver KLU. 
+KLU is a linear solver for sparse linear systems (a left-looking LU), which is well suited for 
+matrices arising in circuit simulation applications.
 
 ## Installation
 ```julia
