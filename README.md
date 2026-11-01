@@ -76,7 +76,7 @@ in the factorization object: sharing one factorization between threads is safe, 
 calls are serialized. Distinct factorizations share no state and run fully in parallel.
 
 To solve many right-hand sides against one matrix, batch them as the columns of a single
-`B` in one `solve!`/`ldiv!` call, which runs on one thread. To solve them in parallel, give
+`B` in one `KLU.solve!`/`ldiv!` call, which runs on one thread. To solve them in parallel, give
 each task its own `copy(F)` or `klu(A)`, each of which costs as much time and memory as a
 new factorization.
 

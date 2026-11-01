@@ -79,6 +79,9 @@ using LinearAlgebra
                 for (P1, Q1) in ((klua.p, klua.q), (P[1:end-1], Q), (P, fill(Ti(0), 5)))
                     @test_throws ArgumentError klu_analyze!(KLUFactorization(A), P1, Q1)
                 end
+                # Also on an object that has already been analyzed.
+                @test_throws ArgumentError klu_analyze!(klua, klua.p, klua.q)
+                @test A * (klua \ b) ≈ b
             end
             @testset "Utility functions" begin
                 K = KLUFactorization(A);
@@ -389,7 +392,7 @@ end
                     worst = max(worst, norm(As' * x - b) / norm(b))
                     x = transpose(F) \ b
                     worst = max(worst, norm(transpose(As) * x - b) / norm(b))
-                    X = solve!(F, repeat(b, 1, 3))
+                    X = KLU.solve!(F, repeat(b, 1, 3))
                     worst = max(worst, norm(As * X .- b) / norm(b))
                 end
                 residuals[t] = worst
@@ -492,6 +495,13 @@ end
     klu_factor!(F)               # must not leak p1 (setproperty! frees it)
     @test F._numeric != C_NULL
     @test F \ [1.0, 2.0] ≈ [1.0, 1.0]
+end
+
+@testset "solve! is not exported" begin
+    # Other packages export a different solve!, and using both would make it ambiguous.
+    @test !Base.isexported(KLU, :solve!)
+    F = klu(sparse([2.0 1; 1 3]))
+    @test KLU.solve!(F, [3.0, 4.0]) ≈ [1.0, 1.0]
 end
 
 @testset "Condition estimates and pivot growth (issue #29)" begin
@@ -690,16 +700,16 @@ end
     for op in (identity, adjoint, transpose)
         K = klu(2, [0, 5, 1], [0], [1.0]; check = false)
         B = ones(2)
-        @test solve!(op(K), B; check = false) === B
+        @test KLU.solve!(op(K), B; check = false) === B
         @test K.common.status == KLU.KLU_INVALID
         @test !issuccess(K)
-        @test_throws ArgumentError solve!(op(K), ones(2))
+        @test_throws ArgumentError KLU.solve!(op(K), ones(2))
         S = sparse([1.0 2.0; 0.0 0.0])
         K = klu(S; full_factor = false)
-        @test solve!(op(K), ones(2); check = false) isa Vector{Float64}
+        @test KLU.solve!(op(K), ones(2); check = false) isa Vector{Float64}
         @test K.common.status == KLU.KLU_SINGULAR
         K = klu(S; full_factor = false)
-        @test_throws SingularException solve!(op(K), ones(2))
+        @test_throws SingularException KLU.solve!(op(K), ones(2))
     end
 
     # Assigning the current pointer must not free it, which would leave it dangling.
